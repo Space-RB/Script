@@ -20716,8 +20716,7 @@ end)]]
 -- Notification Service  
 if getgenv().NotNotification ~= true then
 	pcall(function()
-		getgenv().Notify = loadstring(game:HttpGet("https://raw.githubusercontent.com/" .. getgenv().Organization .. "/" .. getgenv().Repository .. "/refs/heads/main/LuaCore/Utility/NotificationLib", true))()
-		getgenv().NotNotification = true
+		getgenv().Notify = loadstring(game:HttpGet("https://raw.githubusercontent.com/Space-RB/Hub-V3/refs/heads/main/LuaCore/Utility/NotificationLib", true))()
 	end)
 end
 -- v3.6a | Updated Library
