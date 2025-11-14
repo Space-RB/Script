@@ -20699,8 +20699,6 @@
  
 
 ]]
-getgenv().Organization = "Space-RB";
-getgenv().Repository = "Hub-V3";
 
 --[[
 Starter Screen
