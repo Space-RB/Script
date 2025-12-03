@@ -8,14 +8,14 @@ Discord - https://discord.gg/ktC6dNVxDC
 
 Telegram - https://t.me/RBscr1pts
 
-Total Games: 30
+Total Games: 31
 
 ⭐ - Premium Only Script
 🟢 — Game works successfully
 🟠 — Script should work, but we’re not sure
 🔴 — No longer supported
 
-Total working: 21 | Should work: 0 | No longer support: 8
+Total working: 22 | Should work: 0 | No longer support: 8
 
 All Games:
 
@@ -40,12 +40,13 @@ All Games:
 19. Npc Or Die – 🟢
 20. Plants VS Brainrots – 🟢
 21. Prospecting – 🟢
-22. Untilted Drill Game – 🟢
-23. Violence Distruct – 🟢
-24. Build An Island – 🔴
-25. Dep Simulator 2 – 🔴
-26. Dig The BackYard – 🔴
-27. Pets Go (old) – 🔴
-28. SFOTH IV – 🔴
-29. Skinwalkers – 🔴
-30. Steal A Brainrot – 🔴
+22. The Forge [Beta] – 🟢
+23. Untilted Drill Game – 🟢
+24. Violence Distruct – 🟢
+25. Build An Island – 🔴
+26. Dep Simulator 2 – 🔴
+27. Dig The BackYard – 🔴
+28. Pets Go (old) – 🔴
+29. SFOTH IV – 🔴
+30. Skinwalkers – 🔴
+31. Steal A Brainrot – 🔴
