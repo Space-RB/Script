@@ -19,7 +19,7 @@ Total working: 22 | Should work: 0 | No longer support: 8
 
 All Games:
 
-1.  ⭐ Tower Defense Simulator (Money & Gems Farm) – 🟠
+1.  ⭐ Tower Defense Simulator (Macro Recorder) + (Auto Money & Gems Farm) – 🟢
 2.  99 Days In The Forest – 🟢
 3.  Blood Debt – 🟢
 4.  Bloxburg – 🟢
