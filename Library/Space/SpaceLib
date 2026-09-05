@@ -1,0 +1,2394 @@
+isfolder, makefolder, isfile, writefile, readfile, get_hidden_gui, gethui =
+	isfolder, makefolder, isfile, writefile, readfile, get_hidden_gui, gethui
+local CONFIG = {
+	FOLDER_NAME = "SpaceHub",
+	FILE_NAME = "Space.lib",
+	GUI_URL = "https://f.spacehub.wtf/Library/Space/GUI.lua",
+	KAITUN_GUI_URL = "https://f.spacehub.wtf/Library/Space/KaitunGUI.lua",
+	ANIMATION_SPEED = 0.2,
+	NOTIFICATION_VELOCITY = 0.5,
+	SLIDER_UPDATE_RATE = 1 / 24,
+	KEYBIND_COOLDOWN = 0.1,
+	TURN_ALL_COOLDOWN = 0.25,
+	DEFAULT_ICON = "rbxassetid://81669320319405",
+	DEFAULT_NOTIFICATION_ICON = "rbxassetid://81669320319405",
+}
+local COLORS = {
+	BACKGROUND_DARK = Color3.fromRGB(35, 35, 35),
+	BACKGROUND_HOVER = Color3.fromRGB(45, 45, 45),
+	BACKGROUND_LIGHT = Color3.fromRGB(25, 25, 25),
+	BACKGROUND_RED = Color3.fromRGB(255, 105, 107),
+	CLOSE_BUTTON = Color3.fromRGB(55, 55, 55),
+	CLOSE_BUTTON_HOVER = Color3.fromRGB(65, 65, 65),
+	CLOSE_BUTTON_CLICK = Color3.fromRGB(75, 75, 75),
+	GOLD_BLUE_COLOR = Color3.fromRGB(255, 217, 155),
+	TOGGLE_DISABLED = Color3.fromRGB(25, 25, 25),
+	TOGGLE_ENABLED = Color3.fromRGB(255, 217, 155),
+	TEXT_NORMAL = Color3.fromRGB(255, 255, 255),
+	TEXT_DIMMED = Color3.fromRGB(70, 70, 70),
+}
+local EASING_STYLE = Enum.EasingStyle.Quad
+local EASING_DIRECTION = Enum.EasingDirection.Out
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local StarterGui = game:GetService("StarterGui")
+local Utils = {}
+function Utils.GetScreenHeight(uiparent)
+	local fixerGui = Instance.new("ScreenGui")
+	fixerGui.IgnoreGuiInset = true
+	fixerGui.ResetOnSpawn = false
+	fixerGui.DisplayOrder = -999
+	fixerGui.Parent = uiparent or LocalPlayer:WaitForChild("PlayerGui")
+	local tempFrame = Instance.new("Frame", fixerGui)
+	tempFrame.BackgroundTransparency = 1
+	tempFrame.Size = UDim2.new(0, 1, 1, 0)
+	task.wait()
+	local height = tempFrame.AbsoluteSize.Y
+	fixerGui:Destroy()
+	return height
+end
+function Utils.GetUIParent()
+	local hiddenUI = get_hidden_gui or gethui
+	local success, robloxGui = pcall(function()
+		return game:GetService("CoreGui").RobloxGui
+	end)
+	return (hiddenUI and hiddenUI()) or (success and robloxGui) or LocalPlayer.PlayerGui
+end
+function Utils.FormatAssetId(assetId)
+	if not assetId then
+		return nil
+	end
+	return (tonumber(assetId) and ("rbxassetid://" .. assetId)) or assetId
+end
+function Utils.CensorPlayerName(playerName)
+	local nameLength = #playerName
+	local censorLength = nameLength - (nameLength > 5 and 3 or 1)
+	local visiblePart = string.sub(playerName, censorLength + 1)
+	local censoredPart = string.rep("*", censorLength)
+	return censoredPart .. visiblePart
+end
+local AnimationSystem = {}
+local tweenInfoCache = {}
+function AnimationSystem.GetTweenInfo(duration, style, direction)
+	local key = tostring(duration) .. (style or "") .. (direction or "")
+	if not tweenInfoCache[key] then
+		tweenInfoCache[key] = TweenInfo.new(duration, style or EASING_STYLE, direction or EASING_DIRECTION)
+	end
+	return tweenInfoCache[key]
+end
+function AnimationSystem.Create(instance, duration, properties, waitForCompletion)
+	if not instance or typeof(instance) ~= "Instance" then
+		return
+	end
+	local tweenInfo = AnimationSystem.GetTweenInfo(duration)
+	local success, error = pcall(function()
+		local tween = TweenService:Create(instance, tweenInfo, properties)
+		tween:Play()
+		if waitForCompletion then
+			tween.Completed:Wait()
+		end
+		return tween
+	end)
+	if not success then
+		warn("[SpaceLib] Animation Error: ", error)
+	end
+	table.clear(properties)
+end
+local ConfigurationSystem = {}
+local configPath = CONFIG.FOLDER_NAME .. "/" .. CONFIG.FILE_NAME
+local lastSavedConfig = ""
+function ConfigurationSystem.Initialize()
+	if not isfolder(CONFIG.FOLDER_NAME) then
+		makefolder(CONFIG.FOLDER_NAME)
+	end
+	if not isfile(configPath) then
+		writefile(configPath, "")
+	end
+end
+function ConfigurationSystem.Load(libraryFlags)
+	local data = {}
+	local loaded = false
+	if type(_G.SpaceSettings) == "table" then
+		data = _G.SpaceSettings
+		loaded = true
+	elseif isfile(configPath) then
+		local success, result = pcall(function()
+			return HttpService:JSONDecode(readfile(configPath))
+		end)
+		if success and result then
+			data = result
+			loaded = true
+		end
+	end
+	for flagName, flagValue in pairs(data) do
+		libraryFlags[flagName] = flagValue
+	end
+	table.clear(data)
+	return loaded
+end
+function ConfigurationSystem.Save(libraryFlags)
+	local data = {}
+	for flagName, flagValue in pairs(libraryFlags) do
+		data[flagName] = flagValue
+	end
+	local currentConfig = HttpService:JSONEncode(data)
+	table.clear(data)
+	if lastSavedConfig ~= currentConfig then
+		lastSavedConfig = currentConfig
+		writefile(configPath, currentConfig)
+	end
+end
+function DragSystem(frame, dragSpeed)
+	local isDragging = false
+	local dragStart = nil
+	local startPosition = nil
+	local function updatePosition(input)
+		local delta = input.Position - dragStart
+		local newPosition = UDim2.new(
+			startPosition.X.Scale,
+			startPosition.X.Offset + delta.X,
+			startPosition.Y.Scale,
+			startPosition.Y.Offset + delta.Y
+		)
+		local tweenInfo = TweenInfo.new(dragSpeed)
+		TweenService:Create(frame, tweenInfo, { Position = newPosition }):Play()
+	end
+	local function onInputBegan(input)
+		if
+			input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch
+		then
+			isDragging = true
+			dragStart = input.Position
+			startPosition = frame.Position
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then
+					isDragging = false
+				end
+			end)
+		end
+	end
+	local function onInputChanged(input)
+		if
+			(input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch)
+			and isDragging
+		then
+			updatePosition(input)
+		end
+	end
+	return onInputBegan, onInputChanged
+end
+local CallbackSystem = { FailureCounts = {} }
+function CallbackSystem.SafeCall(functionName, callback, ...)
+	if type(callback) ~= "function" then
+		return
+	end
+	local key = functionName .. tostring(callback)
+	local success, err = pcall(callback, ...)
+	if success then
+		CallbackSystem.FailureCounts[key] = 0
+		return
+	end
+	CallbackSystem.FailureCounts[key] = (CallbackSystem.FailureCounts[key] or 0) + 1
+	local count = CallbackSystem.FailureCounts[key]
+	if count >= 2 then
+		warn(
+			"[SpaceLib] Callback '",
+			functionName,
+			"' has failed 2 consecutive times and requires supervision, report this to the Discord server - ",
+			err
+		)
+		return
+	end
+	warn("[SpaceLib] Callback Error: ", functionName, " - ", err)
+	task.wait(5 + math.random())
+	CallbackSystem.SafeCall(functionName, callback, ...)
+end
+local Library = { Flags = {}, SelectedTab = nil, Tabs = {} }
+local spaceConnections = {}
+local spaceThreads = {}
+local activeQuests = {}
+local notificationThreads = {}
+local function trackConn(conn)
+	table.insert(spaceConnections, conn)
+	return conn
+end
+local function trackThread(t)
+	table.insert(spaceThreads, t)
+	return t
+end
+local uiParent = Utils.GetUIParent()
+if uiParent then
+	for _, previousUI in ipairs(uiParent:GetChildren()) do
+		if previousUI.Name == "SpaceLib" then
+			previousUI:Destroy()
+		end
+	end
+end
+local isRobloxGui = pcall(function()
+	return game:GetService("CoreGui").RobloxGui
+end)
+local function loadRemoteGui(url, name)
+	local success, result = pcall(function()
+		local source = game:HttpGet(url)
+		local chunk, compileError = loadstring(source)
+		if not chunk then
+			error(compileError)
+		end
+		return chunk()
+	end)
+	if not success then
+		warn("[SpaceLib] Loading: Failed to load " .. name .. " from " .. url .. " - " .. tostring(result))
+		return nil
+	end
+	return result
+end
+function Library:CreateNotification(settings)
+	StarterGui:SetCore("SendNotification", {
+		Title = settings.Title or "Unknown",
+		Text = settings.Content or "Unknown",
+		Icon = Utils.FormatAssetId(settings.Image) or CONFIG.DEFAULT_NOTIFICATION_ICON,
+		Duration = settings.Duration or 5,
+	})
+	return
+end
+function Library:CreateQuest(questData)
+	function questData:Update()
+		return
+	end
+	function questData:Destroy()
+		return
+	end
+	return questData
+end
+function Library:CreateWindow(settings)
+	local mainUI = nil
+	if settings.Kaitun then
+		if isRobloxGui then
+			mainUI = loadRemoteGui(CONFIG.KAITUN_GUI_URL, "Kaitun GUI")
+		else
+			local KaitunGUIObject = script:FindFirstChild("KaitunGUIObject")
+			if KaitunGUIObject then
+				mainUI = KaitunGUIObject.Value
+			end
+			local FileSystem = script:FindFirstChildWhichIsA("ModuleScript")
+			if FileSystem then
+				for funcName, func in pairs(require(FileSystem)) do
+					getfenv()[funcName] = func
+				end
+			end
+		end
+		if not mainUI then
+			return warn("[SpaceLib] Loading: Kaitun GUI source is not configured")
+		end
+		mainUI.Parent = uiParent
+	else
+		if isRobloxGui then
+			mainUI = loadRemoteGui(CONFIG.GUI_URL, "GUI")
+		else
+			local GUIObject = script:FindFirstChild("GUIObject")
+			if GUIObject then
+				mainUI = GUIObject.Value
+			end
+			local FileSystem = script:FindFirstChildWhichIsA("ModuleScript")
+			if FileSystem then
+				for funcName, func in pairs(require(FileSystem)) do
+					getfenv()[funcName] = func
+				end
+			end
+		end
+		if not mainUI then
+			return warn("[SpaceLib] Loading: GUI source is not configured")
+		end
+		mainUI.Parent = uiParent
+		local backgroundGUI = mainUI.BackgroundGUI
+		backgroundGUI.Visible = false
+		backgroundGUI.Position = UDim2.new(0.5, 0, 1.5, 0)
+		local frameScale = backgroundGUI:FindFirstChildWhichIsA("UIScale")
+		local backgroundNotification = mainUI.BackgroundNotification.Notifications
+		backgroundNotification.Template.Visible = false
+		local notifyScale = mainUI.BackgroundNotification:FindFirstChildWhichIsA("UIScale")
+		local backgroundQuest = mainUI.BackgroundQuest
+		local questTemplate = backgroundQuest.Quests.ListLayout.Template
+		questTemplate.Visible = false
+		local questScale = mainUI.BackgroundQuest:FindFirstChildWhichIsA("UIScale")
+		local backgroundToggle = mainUI.BrackgroundToggle
+		local toggleScale = backgroundToggle:FindFirstChildWhichIsA("UIScale")
+		local toggleButton = backgroundToggle.MinimizerButton
+		backgroundQuest.Position = UDim2.new(0, ((-300 * questScale.Scale) - 30), 0, 68)
+		local topBar = backgroundGUI.Top
+		local closeButton = topBar.CloseButton
+		local minimizeButton = topBar.MinimizeButton
+		local uiTitle = topBar.UITitle
+		local bottomBar = backgroundGUI.Bottom
+		local welcomeText = topBar.WelcomeFrame.WelcomeText
+		local avatar = topBar.WelcomeFrame.AvatarBorder.Avatar
+		local settingsButton = bottomBar.SettingsButton
+		local optionsPanel = backgroundGUI.Options
+		local tabButtons = optionsPanel.TabButtons
+		local tabsgui = backgroundGUI.Tabs
+		local tabtemplate = backgroundGUI.Tabs.Template
+		tabtemplate.Visible = false
+		local DisabledFrameTemplate = tabtemplate.ScrollingFrame.DisabledFrame
+		DisabledFrameTemplate.Visible = false
+		local closePopUp = backgroundGUI.ClosePopUp
+		closePopUp.BackgroundTransparency = 1
+		closePopUp.Visible = false
+		local closePopUpMain = closePopUp.Main
+		closePopUpMain.Position = UDim2.new(0.5, 0, 0.5, (Utils.GetScreenHeight(uiParent) * 1.5))
+		local closePopUpMinimizeButton = closePopUpMain.Top.MinimizeButton
+		local closePopUpCloseButton = closePopUpMain.Handler.Button
+		local topDragBegan, topDragChanged = DragSystem(backgroundGUI, CONFIG.ANIMATION_SPEED)
+		local bottomDragBegan, bottomDragChanged = DragSystem(backgroundGUI, CONFIG.ANIMATION_SPEED)
+		trackConn(topBar.InputBegan:Connect(topDragBegan))
+		trackConn(bottomBar.InputBegan:Connect(bottomDragBegan))
+		trackConn(UserInputService.InputChanged:Connect(function(input)
+			topDragChanged(input)
+			bottomDragChanged(input)
+		end))
+		trackThread(task.spawn(function()
+			while true do
+				local screenHeight = Utils.GetScreenHeight(uiParent)
+				local scalemultiplierfactor = screenHeight < 400 and 1.35
+					or screenHeight < 600 and 1.5
+					or screenHeight < 800 and 1.75
+					or screenHeight < 1000 and 2
+					or 2.25
+				local scaleFactor = math.min(1, (screenHeight / (backgroundGUI.Size.Y.Offset * scalemultiplierfactor)))
+				frameScale.Scale = scaleFactor
+				notifyScale.Scale = scaleFactor
+				questScale.Scale = scaleFactor
+				toggleScale.Scale = math.min((scaleFactor + 0.25), 1)
+				task.wait(5)
+			end
+		end))
+		ConfigurationSystem.Initialize()
+		local isToggling = false
+		function Library:Toggle()
+			if isToggling then
+				return
+			end
+			isToggling = true
+			if backgroundGUI.Visible then
+				AnimationSystem.Create(backgroundGUI, 0.5, { Position = UDim2.new(0.5, 0, 1.5, 0) }, true)
+				backgroundGUI.Visible = false
+			else
+				backgroundGUI.Visible = true
+				AnimationSystem.Create(backgroundGUI, 0.5, { Position = UDim2.new(0.5, 0, 0.5, 0) }, true)
+			end
+			isToggling = false
+		end
+		function Library:CreateNotification(settings)
+			local title = settings.Title or "Unknown"
+			local content = settings.Content or "Unknown"
+			local duration = settings.Duration or 5
+			local image = settings.Image
+			local thread = trackThread(task.spawn(function()
+				local success, error = pcall(function()
+					local notification = backgroundNotification.Template:Clone()
+					notification.Parent = backgroundNotification
+					notification.Visible = true
+					notification.Size = UDim2.new(1, 0, 0, 0)
+					local mainNotification = notification.Main
+					mainNotification.BackgroundTransparency = 1
+					mainNotification.UIStroke.Transparency = 1
+					local titleFrame = mainNotification.TitleFrame
+					local titleText = titleFrame.Icon.Title
+					titleText.Text = title
+					titleText.TextTransparency = 1
+					local iconImage = titleFrame.Icon
+					iconImage.Image = Utils.FormatAssetId(image) or CONFIG.DEFAULT_NOTIFICATION_ICON
+					iconImage.ImageTransparency = 1
+					local contentText = mainNotification.Content
+					contentText.Text = content
+					contentText.Size = UDim2.new(1, 0, 0, contentText.TextBounds.Y)
+					contentText.TextTransparency = 1
+					local realSize = UDim2.new(
+						1,
+						0,
+						0,
+						(
+							titleFrame.AbsoluteSize.Y
+							+ contentText.AbsoluteSize.Y
+							+ mainNotification.BottomPadding.AbsoluteSize.Y
+						) / notifyScale.Scale
+					)
+					mainNotification.Position = UDim2.new(1, 0, 0, 15)
+					AnimationSystem.Create(notification, CONFIG.NOTIFICATION_VELOCITY, { Size = realSize }, false)
+					task.wait(CONFIG.NOTIFICATION_VELOCITY / 2)
+					AnimationSystem.Create(
+						mainNotification,
+						CONFIG.NOTIFICATION_VELOCITY,
+						{ Position = UDim2.new(0, 0, 0, 0) },
+						false
+					)
+					AnimationSystem.Create(
+						mainNotification.UIStroke,
+						CONFIG.NOTIFICATION_VELOCITY,
+						{ Transparency = 0.5 },
+						false
+					)
+					AnimationSystem.Create(
+						mainNotification,
+						CONFIG.NOTIFICATION_VELOCITY,
+						{ BackgroundTransparency = 0 },
+						false
+					)
+					AnimationSystem.Create(titleText, CONFIG.NOTIFICATION_VELOCITY, { TextTransparency = 0 }, false)
+					AnimationSystem.Create(iconImage, CONFIG.NOTIFICATION_VELOCITY, { ImageTransparency = 0 }, false)
+					AnimationSystem.Create(contentText, CONFIG.NOTIFICATION_VELOCITY, { TextTransparency = 0.5 }, true)
+					task.wait(duration)
+					AnimationSystem.Create(
+						mainNotification,
+						CONFIG.NOTIFICATION_VELOCITY,
+						{ BackgroundTransparency = 1 },
+						false
+					)
+					AnimationSystem.Create(
+						mainNotification.UIStroke,
+						CONFIG.NOTIFICATION_VELOCITY,
+						{ Transparency = 1 },
+						false
+					)
+					AnimationSystem.Create(titleText, CONFIG.NOTIFICATION_VELOCITY, { TextTransparency = 1 }, false)
+					AnimationSystem.Create(iconImage, CONFIG.NOTIFICATION_VELOCITY, { ImageTransparency = 1 }, false)
+					AnimationSystem.Create(contentText, CONFIG.NOTIFICATION_VELOCITY, { TextTransparency = 1 }, true)
+					AnimationSystem.Create(
+						notification,
+						CONFIG.NOTIFICATION_VELOCITY,
+						{ Size = UDim2.new(1, 0, 0, -10) },
+						true
+					)
+					notification:Destroy()
+				end)
+				if not success then
+					warn("[SpaceLib] Notification Error: ", error)
+				end
+			end))
+			table.insert(notificationThreads, thread)
+		end
+		function Library:CreateQuest(questData)
+			questData.NeedDestroy = false
+			questData.Destroyed = false
+			questData.NeedUpdate = false
+			questData.Quest = questData.Quest or ""
+			questData.Amount = questData.Amount or 0
+			questData.Progress = questData.Progress or 0
+			table.insert(activeQuests, questData)
+			trackThread(task.spawn(function()
+				local titleText = backgroundQuest.Title
+				local questFrame = questTemplate:Clone()
+				questFrame.Parent = backgroundQuest.Quests.ListLayout
+				questFrame.Visible = true
+				local function updateQuestSize()
+					local childCount = #backgroundQuest.Quests.ListLayout:GetChildren()
+					local newHeight = childCount <= 3 and 145 or (145 + (80 * (childCount - 3)))
+					AnimationSystem.Create(
+						backgroundQuest,
+						CONFIG.NOTIFICATION_VELOCITY,
+						{ Size = UDim2.new(0, 300, 0, newHeight) },
+						false
+					)
+				end
+				updateQuestSize()
+				local questText = questFrame.Quest
+				local barProgress = questFrame.MainBar.Bar
+				local textProgress = questFrame.MainBar.QuestProgress
+				titleText.Text = questData.Title
+				questText.TextTransparency = 1
+				textProgress.TextTransparency = 1
+				barProgress.Size = UDim2.new(0, 0, 1, 0)
+				questFrame.MainBar.BackgroundTransparency = 1
+				questFrame.MainBar.Bar.BackgroundTransparency = 1
+				local function updateQuest()
+					questText.Text = questData.Quest
+					textProgress.Text = string.format("%d/%d", questData.Progress, questData.Amount)
+					local progressRatio = (questData.Amount == 0) and 0 or (questData.Progress / questData.Amount)
+					AnimationSystem.Create(
+						barProgress,
+						CONFIG.NOTIFICATION_VELOCITY / 2,
+						{ Size = UDim2.new(progressRatio, 0, 1, 0) },
+						false
+					)
+				end
+				updateQuest()
+				AnimationSystem.Create(questText, CONFIG.NOTIFICATION_VELOCITY, { TextTransparency = 0 }, false)
+				AnimationSystem.Create(textProgress, CONFIG.NOTIFICATION_VELOCITY, { TextTransparency = 0 }, false)
+				AnimationSystem.Create(
+					questFrame.MainBar,
+					CONFIG.NOTIFICATION_VELOCITY,
+					{ BackgroundTransparency = 0 },
+					false
+				)
+				AnimationSystem.Create(barProgress, CONFIG.NOTIFICATION_VELOCITY, { BackgroundTransparency = 0 }, false)
+				AnimationSystem.Create(
+					questFrame.MainBar.UIStroke,
+					CONFIG.NOTIFICATION_VELOCITY,
+					{ Transparency = 0 },
+					false
+				)
+				AnimationSystem.Create(barProgress.UIStroke, CONFIG.NOTIFICATION_VELOCITY, { Transparency = 0 }, false)
+				AnimationSystem.Create(textProgress.UIStroke, CONFIG.NOTIFICATION_VELOCITY, { Transparency = 0 }, false)
+				local function hideQuestBackground()
+					if #backgroundQuest.Quests.ListLayout:GetChildren() == 2 then
+						backgroundQuest:SetAttribute("Hidden", true)
+						AnimationSystem.Create(
+							backgroundQuest,
+							CONFIG.NOTIFICATION_VELOCITY,
+							{ Position = UDim2.new(0, ((-300 * questScale.Scale) - 30), 0, 68) },
+							false
+						)
+					end
+				end
+				if backgroundQuest:GetAttribute("Hidden") then
+					backgroundQuest:SetAttribute("Hidden", false)
+					AnimationSystem.Create(
+						backgroundQuest,
+						CONFIG.NOTIFICATION_VELOCITY,
+						{ Position = UDim2.new(0, 15, 0, 68) },
+						false
+					)
+				end
+				while not questData.Destroyed do
+					if questData.NeedUpdate then
+						updateQuest()
+						questData.NeedUpdate = false
+					end
+					if questData.NeedDestroy then
+						questData.Destroyed = true
+						AnimationSystem.Create(questText, CONFIG.NOTIFICATION_VELOCITY, { TextTransparency = 1 }, false)
+						AnimationSystem.Create(
+							textProgress,
+							CONFIG.NOTIFICATION_VELOCITY,
+							{ TextTransparency = 1 },
+							false
+						)
+						AnimationSystem.Create(
+							questFrame.MainBar,
+							CONFIG.NOTIFICATION_VELOCITY,
+							{ BackgroundTransparency = 1 },
+							false
+						)
+						AnimationSystem.Create(
+							barProgress,
+							CONFIG.NOTIFICATION_VELOCITY,
+							{ BackgroundTransparency = 1 },
+							false
+						)
+						AnimationSystem.Create(
+							questFrame.MainBar.UIStroke,
+							CONFIG.NOTIFICATION_VELOCITY,
+							{ Transparency = 1 },
+							false
+						)
+						AnimationSystem.Create(
+							barProgress.UIStroke,
+							CONFIG.NOTIFICATION_VELOCITY,
+							{ Transparency = 1 },
+							false
+						)
+						AnimationSystem.Create(
+							textProgress.UIStroke,
+							CONFIG.NOTIFICATION_VELOCITY,
+							{ Transparency = 1 },
+							true
+						)
+						questFrame:Destroy()
+						updateQuestSize()
+						hideQuestBackground()
+					end
+					task.wait()
+				end
+			end))
+			function questData:Update(newData)
+				if questData.Destroyed then
+					return
+				end
+				questData.Quest = newData.Quest or questData.Quest
+				questData.Amount = newData.Amount or questData.Amount
+				questData.Progress = newData.Progress or questData.Progress
+				questData.NeedUpdate = true
+			end
+			function questData:Destroy()
+				if questData.Destroyed then
+					return
+				end
+				questData.NeedDestroy = true
+			end
+			return questData
+		end
+		local windowFunctions = {}
+		local blueprint = {}
+		local name = settings.Name or "Space Hub | By 'space_xyz' and '1dnt'"
+		uiTitle.Text = tostring(name)
+		local playerName = Utils.CensorPlayerName(LocalPlayer.Name)
+		welcomeText.Text = playerName
+		avatar.Parent.ZIndex = 6
+		avatar.ZIndex = 7
+		avatar.Visible = true
+		avatar.ImageTransparency = 0
+		avatar.BackgroundTransparency = 1
+		avatar.Image = ("rbxthumb://type=AvatarHeadShot&id=%d&w=150&h=150"):format(LocalPlayer.UserId)
+		task.spawn(function()
+			for _ = 1, 10 do
+				local success, thumbnail, isReady = pcall(
+					Players.GetUserThumbnailAsync,
+					Players,
+					LocalPlayer.UserId,
+					Enum.ThumbnailType.HeadShot,
+					Enum.ThumbnailSize.Size150x150
+				)
+				if success and type(thumbnail) == "string" and thumbnail ~= "" then
+					avatar.Image = thumbnail
+					if isReady then
+						break
+					end
+				end
+				task.wait(0.5)
+			end
+		end)
+		if ConfigurationSystem.Load(Library.Flags) then
+			Library:CreateNotification({
+				Title = "Configuration Manager",
+				Content = "The saved configuration from a previous session has been loaded correctly.",
+			})
+		else
+			Library:CreateNotification({
+				Title = "Configuration Manager",
+				Content = "Remember that the configuration is saved for future sessions.",
+			})
+		end
+		trackConn(UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+			if input.KeyCode == Enum.KeyCode.RightControl then
+				Library:Toggle()
+			end
+		end))
+		local minimizerDragging = false
+		local minimizerMoved = false
+		local minimizerDragStart = nil
+		local minimizerStartPosition = nil
+		trackConn(toggleButton.InputBegan:Connect(function(input)
+			if
+				input.UserInputType == Enum.UserInputType.MouseButton1
+				or input.UserInputType == Enum.UserInputType.Touch
+			then
+				minimizerDragging = true
+				minimizerMoved = false
+				minimizerDragStart = input.Position
+				minimizerStartPosition = backgroundToggle.Position
+				trackConn(input.Changed:Connect(function()
+					if input.UserInputState == Enum.UserInputState.End then
+						minimizerDragging = false
+					end
+				end))
+			end
+		end))
+		trackConn(UserInputService.InputChanged:Connect(function(input)
+			if
+				minimizerDragging
+				and (
+					input.UserInputType == Enum.UserInputType.MouseMovement
+					or input.UserInputType == Enum.UserInputType.Touch
+				)
+			then
+				local delta = input.Position - minimizerDragStart
+				if delta.Magnitude > 4 then
+					minimizerMoved = true
+				end
+
+				local viewportSize = workspace.CurrentCamera.ViewportSize
+				local buttonSize = backgroundToggle.AbsoluteSize
+				local newX = math.clamp(minimizerStartPosition.X.Offset + delta.X, -viewportSize.X + buttonSize.X, 0)
+				local newY = math.clamp(
+					minimizerStartPosition.Y.Offset + delta.Y,
+					-viewportSize.Y / 2 + buttonSize.Y / 2,
+					viewportSize.Y / 2 - buttonSize.Y / 2
+				)
+				backgroundToggle.Position =
+					UDim2.new(minimizerStartPosition.X.Scale, newX, minimizerStartPosition.Y.Scale, newY)
+			end
+		end))
+		trackConn(toggleButton.MouseEnter:Connect(function()
+			AnimationSystem.Create(toggleButton, 0.2, { ImageTransparency = 0.1, BackgroundTransparency = 0.05 }, false)
+		end))
+		trackConn(toggleButton.MouseLeave:Connect(function()
+			AnimationSystem.Create(toggleButton, 0.2, { ImageTransparency = 0.3, BackgroundTransparency = 0.1 }, false)
+		end))
+		trackConn(toggleButton.MouseButton1Click:Connect(function()
+			if minimizerMoved then
+				minimizerMoved = false
+				return
+			end
+			Library:Toggle()
+		end))
+		trackConn(minimizeButton.MouseEnter:Connect(function()
+			AnimationSystem.Create(minimizeButton, 0.25, { BackgroundColor3 = COLORS.CLOSE_BUTTON_HOVER }, false)
+		end))
+		trackConn(minimizeButton.MouseLeave:Connect(function()
+			AnimationSystem.Create(minimizeButton, 0.25, { BackgroundColor3 = COLORS.CLOSE_BUTTON }, false)
+		end))
+		trackConn(minimizeButton.MouseButton1Click:Connect(function()
+			Library:Toggle()
+		end))
+		trackConn(closeButton.MouseEnter:Connect(function()
+			AnimationSystem.Create(closeButton, 0.25, { BackgroundColor3 = COLORS.BACKGROUND_RED }, false)
+		end))
+		trackConn(closeButton.MouseLeave:Connect(function()
+			AnimationSystem.Create(closeButton, 0.25, { BackgroundColor3 = COLORS.CLOSE_BUTTON }, false)
+		end))
+		trackConn(closeButton.MouseButton1Click:Connect(function()
+			if closePopUp:GetAttribute("Hidden") == true and mainUI:GetAttribute("Destroying") == false then
+				closePopUp:SetAttribute("Hidden", false)
+				closePopUp.Visible = true
+				bottomBar.Interactable = false
+				optionsPanel.Interactable = false
+				topBar.Interactable = false
+				tabsgui.Interactable = false
+				AnimationSystem.Create(closePopUp, 0.25, { BackgroundTransparency = 0.25 }, false)
+				AnimationSystem.Create(closePopUpMain, 0.5, { Position = UDim2.new(0.5, 0, 0.5, 0) }, false)
+			end
+		end))
+		trackConn(closePopUpMinimizeButton.MouseEnter:Connect(function()
+			if closePopUp:GetAttribute("Hidden") == false and mainUI:GetAttribute("Destroying") == false then
+				AnimationSystem.Create(
+					closePopUpMinimizeButton,
+					0.25,
+					{ BackgroundColor3 = COLORS.CLOSE_BUTTON_HOVER },
+					false
+				)
+			end
+		end))
+		trackConn(closePopUpMinimizeButton.MouseLeave:Connect(function()
+			if closePopUp:GetAttribute("Hidden") == false and mainUI:GetAttribute("Destroying") == false then
+				AnimationSystem.Create(
+					closePopUpMinimizeButton,
+					0.25,
+					{ BackgroundColor3 = COLORS.CLOSE_BUTTON },
+					false
+				)
+			end
+		end))
+		trackConn(closePopUpMinimizeButton.MouseButton1Click:Connect(function()
+			if closePopUp:GetAttribute("Hidden") == false and mainUI:GetAttribute("Destroying") == false then
+				AnimationSystem.Create(closePopUp, 0.25, { BackgroundTransparency = 1 }, false)
+				AnimationSystem.Create(
+					closePopUpMain,
+					0.5,
+					{ Position = UDim2.new(0.5, 0, 0.5, (Utils.GetScreenHeight(uiParent) * 1.5)) },
+					true
+				)
+				closePopUp.Visible = false
+				bottomBar.Interactable = true
+				optionsPanel.Interactable = true
+				topBar.Interactable = true
+				tabsgui.Interactable = true
+				closePopUp:SetAttribute("Hidden", true)
+			end
+		end))
+		trackConn(closePopUpCloseButton.MouseEnter:Connect(function()
+			if closePopUp:GetAttribute("Hidden") == false and mainUI:GetAttribute("Destroying") == false then
+				AnimationSystem.Create(
+					closePopUpCloseButton,
+					0.25,
+					{ BackgroundColor3 = COLORS.BACKGROUND_DARK },
+					false
+				)
+			end
+		end))
+		trackConn(closePopUpCloseButton.MouseLeave:Connect(function()
+			if closePopUp:GetAttribute("Hidden") == false and mainUI:GetAttribute("Destroying") == false then
+				AnimationSystem.Create(
+					closePopUpCloseButton,
+					0.25,
+					{ BackgroundColor3 = COLORS.BACKGROUND_LIGHT },
+					false
+				)
+			end
+		end))
+		trackConn(closePopUpCloseButton.MouseButton1Click:Connect(function()
+			if closePopUp:GetAttribute("Hidden") == false and mainUI:GetAttribute("Destroying") == false then
+				mainUI:SetAttribute("Destroying", true)
+				AnimationSystem.Create(closePopUpCloseButton, 0.25, { TextTransparency = 0 }, false)
+				AnimationSystem.Create(closePopUpCloseButton.Icon, 0.25, { ImageTransparency = 0 }, false)
+				AnimationSystem.Create(
+					closePopUpMinimizeButton,
+					0.25,
+					{ BackgroundColor3 = COLORS.CLOSE_BUTTON },
+					false
+				)
+				AnimationSystem.Create(
+					closePopUpCloseButton,
+					0.25,
+					{ BackgroundColor3 = COLORS.BACKGROUND_LIGHT },
+					false
+				)
+				Library:CreateNotification({
+					Title = "Closing Space Hub",
+					Content = "Space Hub is closing. All running functions and loops will be stopped immediately. To reopen it, re-execute your script.",
+				})
+				task.delay(6.5, function()
+					mainUI:Destroy()
+				end)
+			end
+		end))
+		function windowFunctions:CreateTab(tabName, tabLogo)
+			local tabRecord = { name = tabName, logo = tabLogo, elements = {} }
+			table.insert(blueprint, tabRecord)
+			local tabFunctions = {}
+			local tabName = tabName or "Tab"
+			local tabLogo = Utils.FormatAssetId(tabLogo) or CONFIG.DEFAULT_ICON
+			tabButtons.TabButton.Visible = false
+			local tabCount = (#tabButtons:GetChildren() or 3) - 3
+			if tabCount >= 8 then
+				tabButtons.ScrollingEnabled = true
+				tabButtons.ScrollBarImageTransparency = 0.25
+				tabButtons.ScrollBarThickness = 3
+				tabButtons.UIPadding.PaddingRight = UDim.new(0, 15)
+				trackConn(optionsPanel.MouseEnter:Connect(function()
+					AnimationSystem.Create(tabButtons, 0.25, { ScrollBarImageTransparency = 0 }, false)
+				end))
+				trackConn(optionsPanel.MouseLeave:Connect(function()
+					AnimationSystem.Create(tabButtons, 0.25, { ScrollBarImageTransparency = 0.25 }, false)
+				end))
+			else
+				tabButtons.ScrollingEnabled = false
+				tabButtons.ScrollBarImageTransparency = 1
+				tabButtons.ScrollBarThickness = 0
+				tabButtons.UIPadding.PaddingRight = UDim.new(0, 0)
+			end
+			local tabButton = tabButtons.TabButton:Clone()
+			tabButton.Name = tabName
+			tabButton.Visible = true
+			tabButton.Parent = tabButtons
+			local isFirstTab = #Library.Tabs == 0
+			tabButton.BackgroundColor3 = isFirstTab and COLORS.BACKGROUND_DARK or COLORS.BACKGROUND_LIGHT
+			tabButton.Icon.Image = tabLogo
+			tabButton.Icon.ImageColor3 = isFirstTab and COLORS.GOLD_BLUE_COLOR or COLORS.TEXT_DIMMED
+			tabButton.Text = tabName
+			tabButton.TextColor3 = isFirstTab and COLORS.GOLD_BLUE_COLOR or COLORS.TEXT_DIMMED
+			local sectionBackground = tabtemplate:Clone()
+			sectionBackground.Parent = backgroundGUI.Tabs
+			sectionBackground.Visible = true
+			sectionBackground.Name = tabName
+			sectionBackground.Position = isFirstTab and UDim2.new(0, 10, 0, 10) or UDim2.new(1, 0, 1, 0)
+			sectionBackground.ScrollingFrame.Visible = false
+			sectionBackground:SetAttribute("Template", false)
+			for _, child in ipairs(sectionBackground.ScrollingFrame:GetChildren()) do
+				if child:IsA("GuiObject") then
+					child.Visible = false
+				end
+			end
+			local scrollingFrame = sectionBackground.ScrollingFrame
+			scrollingFrame.Visible = true
+			scrollingFrame.Parent = sectionBackground
+			for _, child in ipairs(scrollingFrame:GetChildren()) do
+				if child:IsA("GuiObject") and not child.Visible then
+					child:Destroy()
+				end
+			end
+			local tabData = { button = tabButton, sectionBG = sectionBackground }
+			table.insert(Library.Tabs, tabData)
+			if #Library.Tabs == 1 then
+				Library.SelectedTab = tabData
+			end
+			trackConn(tabButton.MouseButton1Click:Connect(function()
+				if tabButtons:GetAttribute("Changing") == false and Library.SelectedTab ~= tabData then
+					tabButtons:SetAttribute("Changing", true)
+					Library.SelectedTab = tabData
+					Library.SelectedTab.sectionBG.ZIndex = 2
+					for _, Tab in ipairs(Library.Tabs) do
+						if Tab == Library.SelectedTab then
+							Tab.sectionBG.Visible = true
+							AnimationSystem.Create(
+								Tab.button,
+								0.25,
+								{ BackgroundColor3 = COLORS.BACKGROUND_DARK },
+								false
+							)
+							AnimationSystem.Create(Tab.button, 0.25, { TextColor3 = COLORS.GOLD_BLUE_COLOR }, false)
+							AnimationSystem.Create(
+								Tab.button.Icon,
+								0.25,
+								{ ImageColor3 = COLORS.GOLD_BLUE_COLOR },
+								false
+							)
+							AnimationSystem.Create(Tab.sectionBG, 0.5, { Position = UDim2.new(0, 10, 0, 10) }, false)
+						else
+							AnimationSystem.Create(
+								Tab.button,
+								0.25,
+								{ BackgroundColor3 = COLORS.BACKGROUND_LIGHT },
+								false
+							)
+							AnimationSystem.Create(Tab.button, 0.25, { TextColor3 = COLORS.TEXT_DIMMED }, false)
+							AnimationSystem.Create(Tab.button.Icon, 0.25, { ImageColor3 = COLORS.TEXT_DIMMED }, false)
+							AnimationSystem.Create(Tab.sectionBG, 0.5, { Position = UDim2.new(1, 0, 1, 0) }, false)
+							trackThread(task.delay(0.5, function()
+								Tab.sectionBG.Visible = false
+							end))
+						end
+					end
+					task.wait(0.51)
+					Library.SelectedTab.sectionBG.ZIndex = 1
+					tabButtons:SetAttribute("Changing", false)
+				end
+			end))
+			trackConn(tabButton.MouseEnter:Connect(function()
+				if Library.SelectedTab ~= tabData then
+					AnimationSystem.Create(tabButton, 0.25, { BackgroundColor3 = COLORS.BACKGROUND_HOVER }, false)
+					AnimationSystem.Create(tabButton, 0.25, { TextColor3 = COLORS.TEXT_DIMMED }, false)
+					AnimationSystem.Create(tabButton.Icon, 0.25, { ImageColor3 = COLORS.TEXT_DIMMED }, false)
+				end
+			end))
+			trackConn(tabButton.MouseLeave:Connect(function()
+				if Library.SelectedTab ~= tabData then
+					AnimationSystem.Create(tabButton, 0.25, { BackgroundColor3 = COLORS.BACKGROUND_LIGHT }, false)
+					AnimationSystem.Create(tabButton, 0.25, { TextColor3 = COLORS.TEXT_DIMMED }, false)
+					AnimationSystem.Create(tabButton.Icon, 0.25, { ImageColor3 = COLORS.TEXT_DIMMED }, false)
+				end
+			end))
+			function tabFunctions:CreateSection(sectionText)
+				local section = tabtemplate.ScrollingFrame.Section:Clone()
+				section.Visible = true
+				section.Text = sectionText
+				section.Parent = scrollingFrame
+				local sectionData = {}
+				function sectionData:Set(newText)
+					section.Text = newText or section.Text
+				end
+				table.insert(windowFunctions, sectionData)
+				return sectionData
+			end
+			function tabFunctions:CreateButton(buttonData)
+				local name = buttonData.Name
+				local callback = buttonData.Callback
+				local button = tabtemplate.ScrollingFrame.Button:Clone()
+				button.Visible = true
+				button.Parent = scrollingFrame
+				local buttontext = button.ButtonText
+				buttontext.Text = name
+				local image = button.ImageLabel
+				image.ImageTransparency = 0.5
+				if buttonData.Disabled and buttonData.Disabled.Value then
+					local DisabledFrame = DisabledFrameTemplate:Clone()
+					DisabledFrame.Parent = button
+					DisabledFrame.Visible = true
+					DisabledFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+					DisabledFrame.Size = UDim2.new(1, -2, 1, -2)
+					DisabledFrame.ClipsDescendants = false
+					DisabledFrame.DisabledText.Text = "Disabled (" .. (buttonData.Disabled.Reason or "") .. ")"
+					DisabledFrame.BackgroundTransparency = 0.25
+					DisabledFrame.UIStroke.Transparency = 0.15
+					DisabledFrame.DisabledText.TextTransparency = 1
+					DisabledFrame.DisabledImage.ImageTransparency = 0.15
+					button.MouseEnter:Connect(function()
+						AnimationSystem.Create(DisabledFrame, 0.25, { BackgroundTransparency = 0.25 }, false)
+						AnimationSystem.Create(DisabledFrame.UIStroke, 0.25, { Transparency = 0.15 }, false)
+						AnimationSystem.Create(DisabledFrame.DisabledText, 0.25, { TextTransparency = 0.15 }, false)
+						AnimationSystem.Create(DisabledFrame.DisabledImage, 0.25, { ImageTransparency = 0.25 }, false)
+					end)
+					button.MouseLeave:Connect(function()
+						AnimationSystem.Create(DisabledFrame, 0.25, { BackgroundTransparency = 0.25 }, false)
+						AnimationSystem.Create(DisabledFrame.UIStroke, 0.25, { Transparency = 0.15 }, false)
+						AnimationSystem.Create(DisabledFrame.DisabledText, 0.25, { TextTransparency = 1 }, false)
+						AnimationSystem.Create(DisabledFrame.DisabledImage, 0.25, { ImageTransparency = 0.15 }, false)
+					end)
+					table.insert(windowFunctions, buttonData)
+					return buttonData
+				end
+				button.MouseEnter:Connect(function()
+					AnimationSystem.Create(button, 0.25, { BackgroundColor3 = COLORS.BACKGROUND_HOVER }, false)
+				end)
+				button.MouseLeave:Connect(function()
+					AnimationSystem.Create(button, 0.25, { BackgroundColor3 = COLORS.BACKGROUND_DARK }, false)
+				end)
+				button.MouseButton1Click:Connect(function()
+					trackThread(task.spawn(CallbackSystem.SafeCall, name, callback))
+					AnimationSystem.Create(image, 0.5, { ImageTransparency = 0 }, true)
+					AnimationSystem.Create(image, 0.5, { ImageTransparency = 0.5 }, false)
+				end)
+				function buttonData:Set(newText)
+					buttontext.Text = newText or buttontext.Text
+				end
+				table.insert(windowFunctions, buttonData)
+				return buttonData
+			end
+			function tabFunctions:CreateToggle(toggleData)
+				local name = toggleData.Name
+				local flag = toggleData.Flag
+				local callback = toggleData.Callback
+				local toggle = tabtemplate.ScrollingFrame.Toggle:Clone()
+				toggle.Visible = true
+				toggle.Parent = scrollingFrame
+				local toggleText = toggle.ToggleText
+				toggleText.Name = name
+				toggleText.Text = name
+				local checkbox = toggle.Checkbox
+				checkbox.Name = name
+				if toggleData.Disabled and toggleData.Disabled.Value then
+					local DisabledFrame = DisabledFrameTemplate:Clone()
+					DisabledFrame.Parent = toggle
+					DisabledFrame.Visible = true
+					DisabledFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+					DisabledFrame.Size = UDim2.new(1, -2, 1, -2)
+					DisabledFrame.ClipsDescendants = false
+					DisabledFrame.DisabledText.Text = "Disabled (" .. (toggleData.Disabled.Reason or "") .. ")"
+					DisabledFrame.BackgroundTransparency = 0.25
+					DisabledFrame.UIStroke.Transparency = 0.15
+					DisabledFrame.DisabledText.TextTransparency = 1
+					DisabledFrame.DisabledImage.ImageTransparency = 0.15
+					toggle.MouseEnter:Connect(function()
+						AnimationSystem.Create(DisabledFrame, 0.25, { BackgroundTransparency = 0.25 }, false)
+						AnimationSystem.Create(DisabledFrame.UIStroke, 0.25, { Transparency = 0.15 }, false)
+						AnimationSystem.Create(DisabledFrame.DisabledText, 0.25, { TextTransparency = 0.15 }, false)
+						AnimationSystem.Create(DisabledFrame.DisabledImage, 0.25, { ImageTransparency = 0.25 }, false)
+					end)
+					toggle.MouseLeave:Connect(function()
+						AnimationSystem.Create(DisabledFrame, 0.25, { BackgroundTransparency = 0.25 }, false)
+						AnimationSystem.Create(DisabledFrame.UIStroke, 0.25, { Transparency = 0.15 }, false)
+						AnimationSystem.Create(DisabledFrame.DisabledText, 0.25, { TextTransparency = 1 }, false)
+						AnimationSystem.Create(DisabledFrame.DisabledImage, 0.25, { ImageTransparency = 0.15 }, false)
+					end)
+					table.insert(windowFunctions, toggleData)
+					return toggleData
+				end
+				local isEnabled = false
+				if flag and Library.Flags[flag] then
+					isEnabled = Library.Flags[flag]
+				elseif type(toggleData.CurrentValue) == "boolean" then
+					isEnabled = toggleData.CurrentValue
+				end
+				trackThread(task.spawn(CallbackSystem.SafeCall, name, callback, isEnabled))
+				if not isEnabled then
+					checkbox.BackgroundColor3 = COLORS.TOGGLE_DISABLED
+					checkbox.BackgroundTransparency = 0
+				else
+					checkbox.BackgroundColor3 = COLORS.TOGGLE_ENABLED
+					checkbox.BackgroundTransparency = 0.25
+				end
+				toggle.MouseEnter:Connect(function()
+					AnimationSystem.Create(toggle, 0.25, { BackgroundColor3 = COLORS.BACKGROUND_HOVER }, false)
+				end)
+				toggle.MouseLeave:Connect(function()
+					AnimationSystem.Create(toggle, 0.25, { BackgroundColor3 = COLORS.BACKGROUND_DARK }, false)
+				end)
+				local function toggleState()
+					isEnabled = not isEnabled
+					if not isEnabled then
+						AnimationSystem.Create(checkbox, 0.25, { BackgroundColor3 = COLORS.TOGGLE_DISABLED }, false)
+						AnimationSystem.Create(checkbox, 0.25, { BackgroundTransparency = 0 }, false)
+					else
+						AnimationSystem.Create(checkbox, 0.25, { BackgroundColor3 = COLORS.TOGGLE_ENABLED }, false)
+						AnimationSystem.Create(checkbox, 0.25, { BackgroundTransparency = 0.25 }, false)
+					end
+					trackThread(task.spawn(CallbackSystem.SafeCall, name, callback, isEnabled))
+					if flag then
+						Library.Flags[flag] = isEnabled
+						trackThread(task.spawn(ConfigurationSystem.Save, Library.Flags))
+					end
+				end
+				toggle.MouseButton1Click:Connect(toggleState)
+				checkbox.MouseButton1Click:Connect(toggleState)
+				function toggleData:Set(newValue)
+					if isEnabled == newValue then
+						return
+					end
+					isEnabled = not newValue
+					trackThread(task.spawn(toggleState))
+				end
+				table.insert(windowFunctions, toggleData)
+				return toggleData
+			end
+			local UpdateSliderFromX = nil
+			function tabFunctions:CreateSlider(sliderData)
+				if not UpdateSliderFromX then
+					UpdateSliderFromX = function(
+						sliderBG,
+						range,
+						increment,
+						bar,
+						sliderValue,
+						suffix,
+						currentValue,
+						name,
+						callback,
+						flag,
+						rangeindex
+					)
+						local mouseX = UserInputService:GetMouseLocation().X
+						local relativeX = mouseX - sliderBG.AbsolutePosition.X
+						local totalWidth = sliderBG.AbsoluteSize.X
+						relativeX = math.clamp(relativeX, 0, totalWidth)
+						local rawPercent = relativeX / totalWidth
+						local newValue = range[1] + (rawPercent * (range[2] - range[1]))
+						newValue = math.floor(newValue / increment + 0.5) * increment
+						local decimals = 0
+						if math.floor(increment) ~= increment then
+							decimals = tostring(increment):split(".")[2] and #tostring(increment):split(".")[2] or 2
+						end
+						newValue = tonumber(string.format("%." .. decimals .. "f", newValue))
+						newValue = math.clamp(newValue, range[1], range[2])
+						if rangeindex then
+							newValue = range[rangeindex]
+						end
+						local finalPercent = (newValue - range[1]) / (range[2] - range[1])
+						AnimationSystem.Create(bar, 0.25, { Size = UDim2.new(finalPercent, 0, 1, 0) }, false)
+						if decimals > 0 then
+							sliderValue.Text = string.format("%." .. decimals .. "f", newValue) .. " " .. suffix
+						else
+							sliderValue.Text = tostring(newValue) .. " " .. suffix
+						end
+						if currentValue ~= newValue or rangeindex then
+							trackThread(task.spawn(CallbackSystem.SafeCall, name, callback, newValue))
+							if flag then
+								Library.Flags[flag] = newValue
+								trackThread(task.spawn(ConfigurationSystem.Save, Library.Flags))
+							end
+						end
+						return newValue
+					end
+				end
+				local name = sliderData.Name
+				local range = sliderData.Range
+				local increment = sliderData.Increment or 1
+				local suffix = sliderData.Suffix or ""
+				local flag = sliderData.Flag
+				local callback = sliderData.Callback
+				local currentValue = tonumber(sliderData.CurrentValue) or range[1]
+				local slider = tabtemplate.ScrollingFrame.Slider:Clone()
+				slider.Parent = scrollingFrame
+				slider.Visible = true
+				local sliderBG = slider.SliderBG
+				local sliderText = slider.SliderText
+				local sliderValue = slider.SliderValue
+				local mainBar = sliderBG.MainBar
+				local bar = mainBar.Bar
+				local firstPart = slider.FirstPart
+				local lastPart = slider.LastPart
+				sliderText.Text = name
+				if sliderData.Disabled and sliderData.Disabled.Value then
+					local DisabledFrame = DisabledFrameTemplate:Clone()
+					DisabledFrame.Parent = slider
+					DisabledFrame.Visible = true
+					DisabledFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+					DisabledFrame.Size = UDim2.new(1, -2, 1, -2)
+					DisabledFrame.ClipsDescendants = false
+					DisabledFrame.DisabledText.Text = "Disabled (" .. (sliderData.Disabled.Reason or "") .. ")"
+					DisabledFrame.BackgroundTransparency = 0.25
+					DisabledFrame.UIStroke.Transparency = 0.15
+					DisabledFrame.DisabledText.TextTransparency = 1
+					DisabledFrame.DisabledImage.ImageTransparency = 0.15
+					slider.MouseEnter:Connect(function()
+						AnimationSystem.Create(DisabledFrame, 0.25, { BackgroundTransparency = 0.25 }, false)
+						AnimationSystem.Create(DisabledFrame.UIStroke, 0.25, { Transparency = 0.15 }, false)
+						AnimationSystem.Create(DisabledFrame.DisabledText, 0.25, { TextTransparency = 0.15 }, false)
+						AnimationSystem.Create(DisabledFrame.DisabledImage, 0.25, { ImageTransparency = 0.25 }, false)
+					end)
+					slider.MouseLeave:Connect(function()
+						AnimationSystem.Create(DisabledFrame, 0.25, { BackgroundTransparency = 0.25 }, false)
+						AnimationSystem.Create(DisabledFrame.UIStroke, 0.25, { Transparency = 0.15 }, false)
+						AnimationSystem.Create(DisabledFrame.DisabledText, 0.25, { TextTransparency = 1 }, false)
+						AnimationSystem.Create(DisabledFrame.DisabledImage, 0.25, { ImageTransparency = 0.15 }, false)
+					end)
+					table.insert(windowFunctions, sliderData)
+					return sliderData
+				end
+				if flag and Library.Flags[flag] then
+					currentValue = tonumber(Library.Flags[flag]) or currentValue
+				end
+				currentValue = math.clamp(currentValue, range[1], range[2])
+				local initialPercent = (currentValue - range[1]) / (range[2] - range[1])
+				bar.Size = UDim2.new(initialPercent, 0, 1, 0)
+				sliderValue.Text = tostring(currentValue) .. " " .. suffix
+				trackThread(task.spawn(CallbackSystem.SafeCall, name, callback, currentValue))
+				local decimals = 0
+				if math.floor(increment) ~= increment then
+					decimals = tostring(increment):split(".")[2] and #tostring(increment):split(".")[2] or 2
+				end
+				slider.MouseEnter:Connect(function()
+					AnimationSystem.Create(slider, 0.25, { BackgroundColor3 = COLORS.BACKGROUND_HOVER }, false)
+				end)
+				slider.MouseLeave:Connect(function()
+					AnimationSystem.Create(slider, 0.25, { BackgroundColor3 = COLORS.BACKGROUND_DARK }, false)
+				end)
+				local Dragging = false
+				sliderBG.InputBegan:Connect(function(input)
+					if
+						input.UserInputType == Enum.UserInputType.MouseButton1
+						or input.UserInputType == Enum.UserInputType.Touch
+					then
+						Dragging = true
+						currentValue = UpdateSliderFromX(
+							sliderBG,
+							range,
+							increment,
+							bar,
+							sliderValue,
+							suffix,
+							currentValue,
+							name,
+							callback,
+							flag
+						)
+					end
+				end)
+				firstPart.InputBegan:Connect(function(input)
+					if
+						input.UserInputType == Enum.UserInputType.MouseButton1
+						or input.UserInputType == Enum.UserInputType.Touch
+					then
+						Dragging = true
+						currentValue = UpdateSliderFromX(
+							sliderBG,
+							range,
+							increment,
+							bar,
+							sliderValue,
+							suffix,
+							currentValue,
+							name,
+							callback,
+							flag,
+							1
+						)
+					end
+				end)
+				lastPart.InputBegan:Connect(function(input)
+					if
+						input.UserInputType == Enum.UserInputType.MouseButton1
+						or input.UserInputType == Enum.UserInputType.Touch
+					then
+						Dragging = true
+						currentValue = UpdateSliderFromX(
+							sliderBG,
+							range,
+							increment,
+							bar,
+							sliderValue,
+							suffix,
+							currentValue,
+							name,
+							callback,
+							flag,
+							2
+						)
+					end
+				end)
+				sliderBG.InputEnded:Connect(function(input)
+					if
+						input.UserInputType == Enum.UserInputType.MouseButton1
+						or input.UserInputType == Enum.UserInputType.Touch
+					then
+						Dragging = false
+					end
+				end)
+				firstPart.InputEnded:Connect(function(input)
+					if
+						input.UserInputType == Enum.UserInputType.MouseButton1
+						or input.UserInputType == Enum.UserInputType.Touch
+					then
+						Dragging = false
+					end
+				end)
+				lastPart.InputEnded:Connect(function(input)
+					if
+						input.UserInputType == Enum.UserInputType.MouseButton1
+						or input.UserInputType == Enum.UserInputType.Touch
+					then
+						Dragging = false
+					end
+				end)
+				trackConn(UserInputService.InputChanged:Connect(function(input)
+					if not Dragging then
+						return
+					end
+					if
+						input.UserInputType == Enum.UserInputType.MouseMovement
+						or input.UserInputType == Enum.UserInputType.Touch
+					then
+						currentValue = UpdateSliderFromX(
+							sliderBG,
+							range,
+							increment,
+							bar,
+							sliderValue,
+							suffix,
+							currentValue,
+							name,
+							callback,
+							flag
+						)
+					end
+				end))
+				function sliderData:Set(newValue)
+					newValue = tonumber(newValue)
+					if not newValue then
+						return
+					end
+					newValue = math.floor(newValue / increment + 0.5) * increment
+					newValue = tonumber(string.format("%." .. decimals .. "f", newValue))
+					newValue = math.clamp(newValue, range[1], range[2])
+					currentValue = newValue
+					local percent = (currentValue - range[1]) / (range[2] - range[1])
+					AnimationSystem.Create(bar, 0.25, { Size = UDim2.new(percent, 0, 1, 0) }, false)
+					if decimals > 0 then
+						sliderValue.Text = string.format("%." .. decimals .. "f", currentValue) .. " " .. suffix
+					else
+						sliderValue.Text = tostring(math.floor(currentValue)) .. " " .. suffix
+					end
+					trackThread(task.spawn(CallbackSystem.SafeCall, name, callback, currentValue))
+					if flag then
+						Library.Flags[flag] = currentValue
+						trackThread(task.spawn(ConfigurationSystem.Save, Library.Flags))
+					end
+				end
+				table.insert(windowFunctions, sliderData)
+				return sliderData
+			end
+			function tabFunctions:CreateInput(inputData)
+				local name = inputData.Name
+				local placeholder = inputData.PlaceholderText
+				local removeAfterFocus = inputData.RemoveTextAfterFocusLost
+				local flag = inputData.Flag
+				local callback = inputData.Callback
+				local textBox = tabtemplate.ScrollingFrame.TextBox:Clone()
+				textBox.Visible = true
+				textBox.Parent = scrollingFrame
+				local boxText = textBox.BoxText
+				boxText.Text = name
+				local box = textBox.TextBox
+				box.PlaceholderText = placeholder
+				box.TextEditable = false
+				box.TextTransparency = 0
+				if inputData.Disabled and inputData.Disabled.Value then
+					local DisabledFrame = DisabledFrameTemplate:Clone()
+					DisabledFrame.Parent = textBox
+					DisabledFrame.Visible = true
+					DisabledFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+					DisabledFrame.Size = UDim2.new(1, -2, 1, -2)
+					DisabledFrame.ClipsDescendants = false
+					DisabledFrame.DisabledText.Text = "Disabled (" .. (inputData.Disabled.Reason or "") .. ")"
+					DisabledFrame.BackgroundTransparency = 0.25
+					DisabledFrame.UIStroke.Transparency = 0.15
+					DisabledFrame.DisabledText.TextTransparency = 1
+					DisabledFrame.DisabledImage.ImageTransparency = 0.15
+					textBox.MouseEnter:Connect(function()
+						AnimationSystem.Create(DisabledFrame, 0.25, { BackgroundTransparency = 0.25 }, false)
+						AnimationSystem.Create(DisabledFrame.UIStroke, 0.25, { Transparency = 0.15 }, false)
+						AnimationSystem.Create(DisabledFrame.DisabledText, 0.25, { TextTransparency = 0.15 }, false)
+						AnimationSystem.Create(DisabledFrame.DisabledImage, 0.25, { ImageTransparency = 0.25 }, false)
+					end)
+					textBox.MouseLeave:Connect(function()
+						AnimationSystem.Create(DisabledFrame, 0.25, { BackgroundTransparency = 0.25 }, false)
+						AnimationSystem.Create(DisabledFrame.UIStroke, 0.25, { Transparency = 0.15 }, false)
+						AnimationSystem.Create(DisabledFrame.DisabledText, 0.25, { TextTransparency = 1 }, false)
+						AnimationSystem.Create(DisabledFrame.DisabledImage, 0.25, { ImageTransparency = 0.15 }, false)
+					end)
+					table.insert(windowFunctions, inputData)
+					return inputData
+				end
+				if flag and Library.Flags[flag] then
+					box.Text = Library.Flags[flag]
+				end
+				trackThread(task.spawn(CallbackSystem.SafeCall, name, callback, Library.Flags[flag]))
+				box.TextEditable = true
+				textBox.MouseEnter:Connect(function()
+					AnimationSystem.Create(textBox, 0.25, { BackgroundColor3 = COLORS.BACKGROUND_HOVER }, false)
+				end)
+				textBox.MouseLeave:Connect(function()
+					AnimationSystem.Create(textBox, 0.25, { BackgroundColor3 = COLORS.BACKGROUND_DARK }, false)
+				end)
+				box.Focused:Connect(function()
+					AnimationSystem.Create(box, 0.25, { TextTransparency = 0 }, false)
+				end)
+				box.FocusLost:Connect(function()
+					trackThread(task.spawn(CallbackSystem.SafeCall, name, callback, box.Text))
+					if flag then
+						Library.Flags[flag] = box.Text
+						trackThread(task.spawn(ConfigurationSystem.Save, Library.Flags))
+					end
+					if removeAfterFocus then
+						box.TextEditable = false
+						AnimationSystem.Create(box, 0.25, { TextTransparency = 1 }, true)
+						box.Text = ""
+						AnimationSystem.Create(box, 0.25, { TextTransparency = 0.5 }, false)
+						box.TextEditable = true
+					else
+						AnimationSystem.Create(box, 0.25, { TextTransparency = 0.5 }, false)
+					end
+				end)
+				function inputData:Set(newText)
+					newText = newText or ""
+					trackThread(task.spawn(CallbackSystem.SafeCall, name, callback, newText))
+					box.TextEditable = false
+					AnimationSystem.Create(box, 0.25, { TextTransparency = 1 }, true)
+					box.Text = newText
+					AnimationSystem.Create(box, 0.25, { TextTransparency = 0.5 }, false)
+					box.TextEditable = true
+				end
+				table.insert(windowFunctions, inputData)
+				return inputData
+			end
+			function tabFunctions:CreateKeybind(keybindData)
+				local name = keybindData.Name
+				local holdToInteract = keybindData.HoldToInteract
+				local flag = keybindData.Flag
+				local callback = keybindData.Callback
+				local currentKeybind = keybindData.CurrentKeybind
+				local keybind = tabtemplate.ScrollingFrame.KeyBind:Clone()
+				keybind.Visible = true
+				keybind.Parent = scrollingFrame
+				local nameText = keybind.TextName
+				nameText.Text = name
+				if keybindData.Disabled and keybindData.Disabled.Value then
+					local DisabledFrame = DisabledFrameTemplate:Clone()
+					DisabledFrame.Parent = keybind
+					DisabledFrame.Visible = true
+					DisabledFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+					DisabledFrame.Size = UDim2.new(1, -2, 1, -2)
+					DisabledFrame.ClipsDescendants = false
+					DisabledFrame.DisabledText.Text = "Disabled (" .. (keybindData.Disabled.Reason or "") .. ")"
+					DisabledFrame.BackgroundTransparency = 0.25
+					DisabledFrame.UIStroke.Transparency = 0.15
+					DisabledFrame.DisabledText.TextTransparency = 1
+					DisabledFrame.DisabledImage.ImageTransparency = 0.15
+					keybind.MouseEnter:Connect(function()
+						AnimationSystem.Create(DisabledFrame, 0.25, { BackgroundTransparency = 0.25 }, false)
+						AnimationSystem.Create(DisabledFrame.UIStroke, 0.25, { Transparency = 0.15 }, false)
+						AnimationSystem.Create(DisabledFrame.DisabledText, 0.25, { TextTransparency = 0.15 }, false)
+						AnimationSystem.Create(DisabledFrame.DisabledImage, 0.25, { ImageTransparency = 0.25 }, false)
+					end)
+					keybind.MouseLeave:Connect(function()
+						AnimationSystem.Create(DisabledFrame, 0.25, { BackgroundTransparency = 0.25 }, false)
+						AnimationSystem.Create(DisabledFrame.UIStroke, 0.25, { Transparency = 0.15 }, false)
+						AnimationSystem.Create(DisabledFrame.DisabledText, 0.25, { TextTransparency = 1 }, false)
+						AnimationSystem.Create(DisabledFrame.DisabledImage, 0.25, { ImageTransparency = 0.15 }, false)
+					end)
+					table.insert(windowFunctions, keybindData)
+					return keybindData
+				end
+				if not string.find(tostring(currentKeybind), "Enum.") then
+					currentKeybind = Enum.KeyCode[currentKeybind]
+				end
+				if flag and Library.Flags[flag] then
+					local flagValue = Library.Flags[flag]
+					if not string.find(tostring(flagValue), "Enum.") then
+						currentKeybind = Enum.KeyCode[flagValue]
+					else
+						currentKeybind = flagValue
+					end
+				end
+				local actualKey = currentKeybind
+				local firstTouch = true
+				local cooldown = tick()
+				local currentValue = false
+				local keyBox = keybind.KeyBox
+				keyBox.Text = currentKeybind.Name
+				keybind.MouseEnter:Connect(function()
+					AnimationSystem.Create(keybind, 0.25, { BackgroundColor3 = COLORS.BACKGROUND_HOVER }, false)
+				end)
+				keybind.MouseLeave:Connect(function()
+					AnimationSystem.Create(keybind, 0.25, { BackgroundColor3 = COLORS.BACKGROUND_DARK }, false)
+				end)
+				keyBox.MouseButton1Click:Connect(function()
+					AnimationSystem.Create(keyBox, 0.12, { TextTransparency = 1 }, true)
+					keyBox.Text = "Select a Key"
+					AnimationSystem.Create(keyBox, 0.12, { TextTransparency = 0.5 }, false)
+					UserInputService.InputBegan:Once(function(input)
+						if input.KeyCode.Name ~= "Unknown" then
+							actualKey = input.KeyCode
+							if flag then
+								Library.Flags[flag] = actualKey.Name
+								trackThread(task.spawn(ConfigurationSystem.Save, Library.Flags))
+							end
+						end
+						firstTouch = false
+						cooldown = tick()
+						AnimationSystem.Create(keyBox, 0.12, { TextTransparency = 1 }, true)
+						keyBox.Text = actualKey.Name
+						AnimationSystem.Create(keyBox, 0.12, { TextTransparency = 0.5 }, false)
+					end)
+				end)
+				if not holdToInteract then
+					trackConn(UserInputService.InputBegan:Connect(function(input)
+						if input.KeyCode == actualKey and tick() - cooldown > CONFIG.KEYBIND_COOLDOWN then
+							currentValue = not currentValue
+							trackThread(task.spawn(CallbackSystem.SafeCall, name, callback, currentValue))
+							AnimationSystem.Create(keyBox, 0.25, { TextTransparency = 0 }, true)
+							AnimationSystem.Create(keyBox, 0.25, { TextTransparency = 0.5 }, false)
+						end
+					end))
+				else
+					trackConn(UserInputService.InputBegan:Connect(function(input)
+						if input.KeyCode == actualKey and tick() - cooldown > CONFIG.KEYBIND_COOLDOWN then
+							trackThread(task.spawn(CallbackSystem.SafeCall, name, callback, true))
+							AnimationSystem.Create(keyBox, 0.25, { TextTransparency = 0 }, false)
+						end
+					end))
+					trackConn(UserInputService.InputEnded:Connect(function(input)
+						if input.KeyCode == actualKey then
+							if firstTouch then
+								trackThread(task.spawn(CallbackSystem.SafeCall, name, callback, false))
+								AnimationSystem.Create(keyBox, 0.25, { TextTransparency = 0.5 }, false)
+							else
+								firstTouch = true
+							end
+						end
+					end))
+				end
+				function keybindData:Set(newKey)
+					newKey = newKey or ""
+					local newKeyCode
+					if not string.find(tostring(newKey), "Enum.") then
+						warn("[SpaceLib] Tip: Please use Enum.KeyCode: From '" .. name .. "' - SpaceLib")
+						newKeyCode = Enum.KeyCode[newKey]
+					else
+						newKeyCode = newKey
+					end
+					if actualKey ~= newKeyCode then
+						actualKey = newKeyCode
+						Library.Flags[flag] = actualKey.Name
+						firstTouch = true
+						AnimationSystem.Create(keyBox, 0.12, { TextTransparency = 1 }, true)
+						keyBox.Text = actualKey.Name
+						AnimationSystem.Create(keyBox, 0.12, { TextTransparency = 0.5 }, false)
+					end
+				end
+				table.insert(windowFunctions, keybindData)
+				return keybindData
+			end
+			function tabFunctions:CreateDropdown(dropdownData)
+				local name = dropdownData.Name
+				local options = dropdownData.Options
+				local flag = dropdownData.Flag
+				local callback = dropdownData.Callback
+				local dropdownMain = tabtemplate.ScrollingFrame.DropdownMain:Clone()
+				dropdownMain.Size = UDim2.new(0.975, 0, 0, 50)
+				dropdownMain.Parent = scrollingFrame
+				dropdownMain.Visible = true
+				local dropdown = dropdownMain.Dropdown
+				local nameText = dropdown.NameText
+				nameText.Text = name
+				local optionText = dropdown.OptionText
+				optionText.Text = "Select an option"
+				local frameList = dropdown.FrameList
+				frameList.Visible = false
+				local list = frameList.List
+				list.ScrollingEnabled = false
+				list.ScrollBarImageTransparency = 1
+				list.ScrollBarThickness = 0
+				list.Option.Visible = false
+				list.Visible = false
+				local optionTemplate = list.Option
+				local browserTextBox = list.Browser.TextBox
+				if dropdownData.Disabled and dropdownData.Disabled.Value then
+					local DisabledFrame = DisabledFrameTemplate:Clone()
+					DisabledFrame.Parent = dropdownMain
+					DisabledFrame.Visible = true
+					DisabledFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+					DisabledFrame.Size = UDim2.new(1, -2, 1, -2)
+					DisabledFrame.ClipsDescendants = false
+					DisabledFrame.DisabledText.Text = "Disabled (" .. (dropdownData.Disabled.Reason or "") .. ")"
+					DisabledFrame.BackgroundTransparency = 0.25
+					DisabledFrame.UIStroke.Transparency = 0.15
+					DisabledFrame.DisabledText.TextTransparency = 1
+					DisabledFrame.DisabledImage.ImageTransparency = 0.15
+					dropdownMain.MouseEnter:Connect(function()
+						AnimationSystem.Create(DisabledFrame, 0.25, { BackgroundTransparency = 0.25 }, false)
+						AnimationSystem.Create(DisabledFrame.UIStroke, 0.25, { Transparency = 0.15 }, false)
+						AnimationSystem.Create(DisabledFrame.DisabledText, 0.25, { TextTransparency = 0.15 }, false)
+						AnimationSystem.Create(DisabledFrame.DisabledImage, 0.25, { ImageTransparency = 0.25 }, false)
+					end)
+					dropdownMain.MouseLeave:Connect(function()
+						AnimationSystem.Create(DisabledFrame, 0.25, { BackgroundTransparency = 0.25 }, false)
+						AnimationSystem.Create(DisabledFrame.UIStroke, 0.25, { Transparency = 0.15 }, false)
+						AnimationSystem.Create(DisabledFrame.DisabledText, 0.25, { TextTransparency = 1 }, false)
+						AnimationSystem.Create(DisabledFrame.DisabledImage, 0.25, { ImageTransparency = 0.15 }, false)
+					end)
+					table.insert(windowFunctions, dropdownData)
+					return dropdownData
+				end
+				local isEnabled = true
+				local needOpen = true
+				local currentOption = dropdownData.CurrentOption
+				if flag and Library.Flags[flag] then
+					currentOption = Library.Flags[flag]
+				end
+				if currentOption then
+					optionText.Text = currentOption
+					trackThread(task.spawn(CallbackSystem.SafeCall, name, callback, currentOption))
+				end
+				dropdownMain.MouseEnter:Connect(function()
+					AnimationSystem.Create(dropdownMain, 0.25, { BackgroundColor3 = COLORS.BACKGROUND_HOVER }, false)
+					AnimationSystem.Create(dropdown, 0.25, { BackgroundColor3 = COLORS.BACKGROUND_HOVER }, false)
+					AnimationSystem.Create(frameList, 0.25, { BackgroundColor3 = COLORS.BACKGROUND_HOVER }, false)
+					if #options > 3 then
+						AnimationSystem.Create(list, 0.25, { ScrollBarImageTransparency = 0 }, false)
+					end
+				end)
+				dropdownMain.MouseLeave:Connect(function()
+					AnimationSystem.Create(dropdownMain, 0.25, { BackgroundColor3 = COLORS.BACKGROUND_DARK }, false)
+					AnimationSystem.Create(dropdown, 0.25, { BackgroundColor3 = COLORS.BACKGROUND_DARK }, false)
+					AnimationSystem.Create(frameList, 0.25, { BackgroundColor3 = COLORS.BACKGROUND_DARK }, false)
+					if #options > 3 then
+						AnimationSystem.Create(list, 0.25, { ScrollBarImageTransparency = 0.25 }, false)
+					end
+				end)
+				browserTextBox.Focused:Connect(function()
+					AnimationSystem.Create(browserTextBox, 0.25, { TextTransparency = 0.25 }, false)
+				end)
+				browserTextBox.FocusLost:Connect(function()
+					AnimationSystem.Create(browserTextBox, 0.25, { TextTransparency = 0.5 }, false)
+					for _, option in ipairs(list:GetChildren()) do
+						if option:IsA("TextButton") and option ~= optionTemplate then
+							if
+								browserTextBox.Text ~= ""
+								and not string.find(option.Text:lower(), browserTextBox.Text:lower())
+							then
+								option.Visible = false
+							else
+								option.Visible = true
+							end
+						end
+					end
+				end)
+				local optionConnections = {}
+				local function createOptions(optionList)
+					local connections = {}
+					local currentOptionnFrame
+					for _, optionName in ipairs(optionList) do
+						local option = optionTemplate:Clone()
+						option.Parent = list
+						option.Visible = true
+						option.Text = optionName
+						currentOptionnFrame = option
+						local optionConnections = {}
+						table.insert(
+							optionConnections,
+							option.MouseEnter:Connect(function()
+								AnimationSystem.Create(
+									option,
+									0.25,
+									{ BackgroundColor3 = COLORS.BACKGROUND_DARK },
+									false
+								)
+							end)
+						)
+						table.insert(
+							optionConnections,
+							option.MouseLeave:Connect(function()
+								AnimationSystem.Create(
+									option,
+									0.25,
+									{ BackgroundColor3 = COLORS.BACKGROUND_LIGHT },
+									false
+								)
+							end)
+						)
+						table.insert(
+							optionConnections,
+							option.MouseButton1Click:Connect(function()
+								if isEnabled then
+									isEnabled = false
+									if optionName ~= currentOption then
+										AnimationSystem.Create(
+											currentOptionnFrame,
+											0.25,
+											{ TextTransparency = 0.5 },
+											false
+										)
+										AnimationSystem.Create(
+											currentOptionnFrame.Icon,
+											0.25,
+											{ ImageTransparency = 0.5 },
+											false
+										)
+										currentOptionnFrame = option
+										optionText.Text = optionName
+										currentOption = optionName
+										trackThread(task.spawn(CallbackSystem.SafeCall, name, callback, currentOption))
+										if flag then
+											Library.Flags[flag] = currentOption
+											trackThread(task.spawn(ConfigurationSystem.Save, Library.Flags))
+										end
+										AnimationSystem.Create(option, 0.25, { TextTransparency = 0.25 }, false)
+										AnimationSystem.Create(option.Icon, 0.25, { ImageTransparency = 0.25 }, false)
+									end
+									local animationTime = #optionList < 3 and 0.4 or 0.6
+									AnimationSystem.Create(dropdown.Icon, animationTime, { Rotation = 0 }, false)
+									AnimationSystem.Create(
+										dropdownMain,
+										animationTime,
+										{ Size = UDim2.new(0.975, 0, 0, 50) },
+										true
+									)
+									frameList.Visible = false
+									list.Visible = false
+									needOpen = true
+									isEnabled = true
+								end
+							end)
+						)
+						connections[optionName] = optionConnections
+					end
+					return connections
+				end
+				optionConnections = createOptions(options)
+				dropdown.MouseButton1Click:Connect(function()
+					if isEnabled then
+						if needOpen then
+							isEnabled = false
+							frameList.Visible = true
+							list.Visible = true
+							local animationTime = #options < 3 and 0.4 or 0.6
+							AnimationSystem.Create(dropdown.Icon, animationTime, { Rotation = 180 }, false)
+							AnimationSystem.Create(
+								dropdownMain,
+								animationTime,
+								{ Size = UDim2.new(0.975, 0, 0, #options < 3 and 195 or 240) },
+								true
+							)
+							needOpen = false
+							isEnabled = true
+						else
+							isEnabled = false
+							local animationTime = #options < 3 and 0.4 or 0.6
+							AnimationSystem.Create(dropdown.Icon, animationTime, { Rotation = 0 }, false)
+							AnimationSystem.Create(
+								dropdownMain,
+								animationTime,
+								{ Size = UDim2.new(0.975, 0, 0, 50) },
+								true
+							)
+							frameList.Visible = false
+							list.Visible = false
+							needOpen = true
+							isEnabled = true
+						end
+					end
+				end)
+				local function updateCanvas(optionList)
+					if #optionList < 3 then
+						list.Size = UDim2.new(1, -5, 0, 150)
+						list.ScrollingEnabled = false
+					elseif #optionList == 3 then
+						list.Size = UDim2.new(1, -5, 0, 195)
+						list.ScrollingEnabled = false
+					elseif #optionList > 3 then
+						list.Size = UDim2.new(1, -5, 0, 195)
+						list.ScrollingEnabled = true
+						list.ScrollBarImageTransparency = 0.25
+						list.ScrollBarThickness = 5
+					end
+				end
+				trackThread(task.spawn(updateCanvas, options))
+				function dropdownData:Set(newOptions)
+					if not isEnabled then
+						return
+					end
+					isEnabled = false
+					AnimationSystem.Create(dropdown.Icon, 0.5, { Rotation = 0 }, false)
+					AnimationSystem.Create(dropdownMain, 0.5, { Size = UDim2.new(0.975, 0, 0, 50) }, true)
+					frameList.Visible = false
+					list.Visible = false
+					browserTextBox.Text = ""
+					for _, option in ipairs(list:GetChildren()) do
+						if option:IsA("TextButton") and option ~= optionTemplate then
+							option:Destroy()
+						end
+					end
+					for _, connections in pairs(optionConnections) do
+						for _, connection in ipairs(connections) do
+							connection:Disconnect()
+						end
+						table.clear(connections)
+					end
+					table.clear(optionConnections)
+					options = newOptions or options
+					optionConnections = createOptions(options)
+					trackThread(task.spawn(updateCanvas, options))
+					needOpen = true
+					isEnabled = true
+				end
+				table.insert(windowFunctions, dropdownData)
+				return dropdownData
+			end
+			function tabFunctions:CreateMultiDropdown(multiDropdownData)
+				local name = multiDropdownData.Name
+				local options = table.clone(multiDropdownData.Options)
+				local flag = multiDropdownData.Flag
+				local callback = multiDropdownData.Callback
+				local multiDropdownMain = tabtemplate.ScrollingFrame.MultiDropdownMain:Clone()
+				multiDropdownMain.Size = UDim2.new(0.975, 0, 0, 50)
+				multiDropdownMain.Parent = scrollingFrame
+				multiDropdownMain.Visible = true
+				local multiDropdown = multiDropdownMain.MultiDropdown
+				local nameText = multiDropdown.NameText
+				nameText.Text = name
+				local optionText = multiDropdown.OptionText
+				optionText.Text = "Select options"
+				local frameList = multiDropdown.FrameList
+				frameList.Visible = false
+				local list = frameList.List
+				list.ScrollingEnabled = false
+				list.ScrollBarImageTransparency = 1
+				list.ScrollBarThickness = 0
+				list.Option.Visible = false
+				list.Visible = false
+				local browserTextBox = list.MiscList.Browser.TextBox
+				local turnAllButton = list.MiscList.TurnAll
+				local optionTemplate = list.Option
+				local isEnabled = true
+				local needOpen = true
+				if multiDropdownData.Disabled and multiDropdownData.Disabled.Value then
+					local DisabledFrame = DisabledFrameTemplate:Clone()
+					DisabledFrame.Parent = multiDropdownMain
+					DisabledFrame.Visible = true
+					DisabledFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+					DisabledFrame.Size = UDim2.new(1, -2, 1, -2)
+					DisabledFrame.ClipsDescendants = false
+					DisabledFrame.DisabledText.Text = "Disabled (" .. (multiDropdownData.Disabled.Reason or "") .. ")"
+					DisabledFrame.BackgroundTransparency = 0.25
+					DisabledFrame.UIStroke.Transparency = 0.15
+					DisabledFrame.DisabledText.TextTransparency = 1
+					DisabledFrame.DisabledImage.ImageTransparency = 0.15
+					multiDropdownMain.MouseEnter:Connect(function()
+						AnimationSystem.Create(DisabledFrame, 0.25, { BackgroundTransparency = 0.25 }, false)
+						AnimationSystem.Create(DisabledFrame.UIStroke, 0.25, { Transparency = 0.15 }, false)
+						AnimationSystem.Create(DisabledFrame.DisabledText, 0.25, { TextTransparency = 0.15 }, false)
+						AnimationSystem.Create(DisabledFrame.DisabledImage, 0.25, { ImageTransparency = 0.25 }, false)
+					end)
+					multiDropdownMain.MouseLeave:Connect(function()
+						AnimationSystem.Create(DisabledFrame, 0.25, { BackgroundTransparency = 0.25 }, false)
+						AnimationSystem.Create(DisabledFrame.UIStroke, 0.25, { Transparency = 0.15 }, false)
+						AnimationSystem.Create(DisabledFrame.DisabledText, 0.25, { TextTransparency = 1 }, false)
+						AnimationSystem.Create(DisabledFrame.DisabledImage, 0.25, { ImageTransparency = 0.15 }, false)
+					end)
+					table.insert(windowFunctions, multiDropdownData)
+					return multiDropdownData
+				end
+				local packedCurrentOption = multiDropdownData.CurrentOption or {}
+				if flag and type(Library.Flags[flag]) == "table" then
+					packedCurrentOption = Library.Flags[flag]
+				end
+				if #packedCurrentOption == 0 then
+					optionText.Text = "Select options"
+				elseif #packedCurrentOption == 1 then
+					optionText.Text = "An option selected"
+				elseif #packedCurrentOption == #options then
+					optionText.Text = "All options selected"
+				else
+					optionText.Text = "Options selected"
+				end
+				trackThread(task.spawn(CallbackSystem.SafeCall, name, callback, packedCurrentOption))
+				multiDropdownMain.MouseEnter:Connect(function()
+					AnimationSystem.Create(
+						multiDropdownMain,
+						0.25,
+						{ BackgroundColor3 = COLORS.BACKGROUND_HOVER },
+						false
+					)
+					AnimationSystem.Create(multiDropdown, 0.25, { BackgroundColor3 = COLORS.BACKGROUND_HOVER }, false)
+					AnimationSystem.Create(frameList, 0.25, { BackgroundColor3 = COLORS.BACKGROUND_HOVER }, false)
+					if #options > 3 then
+						AnimationSystem.Create(list, 0.25, { ScrollBarImageTransparency = 0 }, false)
+					end
+				end)
+				multiDropdownMain.MouseLeave:Connect(function()
+					AnimationSystem.Create(
+						multiDropdownMain,
+						0.25,
+						{ BackgroundColor3 = COLORS.BACKGROUND_DARK },
+						false
+					)
+					AnimationSystem.Create(multiDropdown, 0.25, { BackgroundColor3 = COLORS.BACKGROUND_DARK }, false)
+					AnimationSystem.Create(frameList, 0.25, { BackgroundColor3 = COLORS.BACKGROUND_DARK }, false)
+					if #options > 3 then
+						AnimationSystem.Create(list, 0.25, { ScrollBarImageTransparency = 0.25 }, false)
+					end
+				end)
+				browserTextBox.Focused:Connect(function()
+					AnimationSystem.Create(browserTextBox, 0.25, { TextTransparency = 0.25 }, false)
+				end)
+				browserTextBox.FocusLost:Connect(function()
+					AnimationSystem.Create(browserTextBox, 0.25, { TextTransparency = 0.5 }, false)
+					for _, option in ipairs(list:GetChildren()) do
+						if option:IsA("TextButton") and option ~= optionTemplate then
+							if
+								browserTextBox.Text ~= ""
+								and not string.find(option.Text:lower(), browserTextBox.Text:lower())
+							then
+								option.Visible = false
+							else
+								option.Visible = true
+							end
+						end
+					end
+				end)
+				turnAllButton.MouseEnter:Connect(function()
+					AnimationSystem.Create(turnAllButton, 0.25, { BackgroundColor3 = COLORS.BACKGROUND_DARK }, false)
+				end)
+				turnAllButton.MouseLeave:Connect(function()
+					AnimationSystem.Create(turnAllButton, 0.25, { BackgroundColor3 = COLORS.BACKGROUND_LIGHT }, false)
+				end)
+				local oldCallback = callback
+				local ignoreChange = false
+				local oldOptions = {}
+				local oldTimeAll = tick()
+				local function toggleAll(currentValue)
+					if tick() - oldTimeAll < CONFIG.TURN_ALL_COOLDOWN then
+						return
+					end
+					currentValue = currentValue == nil and not turnAllButton:GetAttribute("All")
+					turnAllButton:SetAttribute("All", currentValue)
+					if currentValue then
+						AnimationSystem.Create(
+							turnAllButton.Checkbox,
+							0.25,
+							{ BackgroundColor3 = COLORS.TOGGLE_ENABLED },
+							false
+						)
+						AnimationSystem.Create(turnAllButton.Checkbox, 0.25, { BackgroundTransparency = 0.25 }, false)
+						AnimationSystem.Create(turnAllButton, 0.25, { TextTransparency = 0.25 }, false)
+					else
+						AnimationSystem.Create(
+							turnAllButton.Checkbox,
+							0.25,
+							{ BackgroundColor3 = COLORS.TOGGLE_DISABLED },
+							false
+						)
+						AnimationSystem.Create(turnAllButton.Checkbox, 0.25, { BackgroundTransparency = 0 }, false)
+						AnimationSystem.Create(turnAllButton, 0.25, { TextTransparency = 0.5 }, false)
+					end
+					ignoreChange = true
+					callback = function() end
+					for _, info in ipairs(oldOptions) do
+						if currentValue and not info.IsEnabled() then
+							trackThread(task.spawn(info.Function, true))
+						elseif not currentValue and info.IsEnabled() then
+							trackThread(task.spawn(info.Function, true))
+						end
+					end
+					ignoreChange = false
+					callback = oldCallback
+					if currentValue then
+						packedCurrentOption = table.clone(options)
+					else
+						packedCurrentOption = {}
+					end
+					trackThread(task.spawn(CallbackSystem.SafeCall, name, callback, packedCurrentOption))
+					if flag then
+						Library.Flags[flag] = packedCurrentOption
+						trackThread(task.spawn(ConfigurationSystem.Save, Library.Flags))
+					end
+					oldTimeAll = tick()
+				end
+				turnAllButton.MouseButton1Click:Connect(toggleAll)
+				turnAllButton.Checkbox.MouseButton1Click:Connect(toggleAll)
+				local function createOptions(optionList)
+					for _, optionName in ipairs(optionList) do
+						local option = optionTemplate:Clone()
+						option.Parent = list
+						option.Visible = true
+						option.Text = optionName
+						option.Name = optionName
+						local checkbox = option.Checkbox
+						local isOptionEnabled = table.find(packedCurrentOption, optionName) ~= nil
+						if not isOptionEnabled then
+							checkbox.BackgroundColor3 = COLORS.TOGGLE_DISABLED
+							checkbox.BackgroundTransparency = 0
+							option.TextTransparency = 0.5
+						else
+							checkbox.BackgroundColor3 = COLORS.TOGGLE_ENABLED
+							checkbox.BackgroundTransparency = 0.25
+							option.TextTransparency = 0.25
+						end
+						option.MouseEnter:Connect(function()
+							AnimationSystem.Create(option, 0.25, { BackgroundColor3 = COLORS.BACKGROUND_DARK }, false)
+						end)
+						option.MouseLeave:Connect(function()
+							AnimationSystem.Create(option, 0.25, { BackgroundColor3 = COLORS.BACKGROUND_LIGHT }, false)
+						end)
+						local function toggleOption(ignoreenabled)
+							if not ignoreenabled then
+								if not isEnabled then
+									return
+								end
+							end
+							isEnabled = false
+							isOptionEnabled = not isOptionEnabled
+							if isOptionEnabled then
+								if not table.find(packedCurrentOption, optionName) then
+									table.insert(packedCurrentOption, optionName)
+								end
+							else
+								local index = table.find(packedCurrentOption, optionName)
+								if index then
+									table.remove(packedCurrentOption, index)
+								end
+							end
+							if #packedCurrentOption == #options then
+								turnAllButton:SetAttribute("All", true)
+								AnimationSystem.Create(
+									turnAllButton.Checkbox,
+									0.25,
+									{ BackgroundColor3 = COLORS.TOGGLE_ENABLED },
+									false
+								)
+								AnimationSystem.Create(
+									turnAllButton.Checkbox,
+									0.25,
+									{ BackgroundTransparency = 0.25 },
+									false
+								)
+								AnimationSystem.Create(turnAllButton, 0.25, { TextTransparency = 0.25 }, false)
+							else
+								turnAllButton:SetAttribute("All", false)
+								AnimationSystem.Create(
+									turnAllButton.Checkbox,
+									0.25,
+									{ BackgroundColor3 = COLORS.TOGGLE_DISABLED },
+									false
+								)
+								AnimationSystem.Create(
+									turnAllButton.Checkbox,
+									0.25,
+									{ BackgroundTransparency = 0 },
+									false
+								)
+								AnimationSystem.Create(turnAllButton, 0.25, { TextTransparency = 0.5 }, false)
+							end
+							trackThread(task.spawn(CallbackSystem.SafeCall, name, callback, packedCurrentOption))
+							if flag and not ignoreChange then
+								Library.Flags[flag] = packedCurrentOption
+								trackThread(task.spawn(ConfigurationSystem.Save, Library.Flags))
+							end
+							if not isOptionEnabled then
+								AnimationSystem.Create(
+									checkbox,
+									0.25,
+									{ BackgroundColor3 = COLORS.TOGGLE_DISABLED },
+									false
+								)
+								AnimationSystem.Create(checkbox, 0.25, { BackgroundTransparency = 0 }, false)
+								AnimationSystem.Create(option, 0.25, { TextTransparency = 0.5 }, false)
+							else
+								AnimationSystem.Create(
+									checkbox,
+									0.25,
+									{ BackgroundColor3 = COLORS.TOGGLE_ENABLED },
+									false
+								)
+								AnimationSystem.Create(checkbox, 0.25, { BackgroundTransparency = 0.25 }, false)
+								AnimationSystem.Create(option, 0.25, { TextTransparency = 0.25 }, false)
+							end
+							if #packedCurrentOption == 0 then
+								optionText.Text = "Select options"
+							elseif #packedCurrentOption == 1 then
+								optionText.Text = "An option selected"
+							elseif #packedCurrentOption == #options then
+								optionText.Text = "All options selected"
+							else
+								optionText.Text = "Options selected"
+							end
+							needOpen = true
+							isEnabled = true
+						end
+						option.MouseButton1Click:Connect(function()
+							toggleOption()
+						end)
+						checkbox.MouseButton1Click:Connect(function()
+							toggleOption()
+						end)
+						table.insert(oldOptions, {
+							Function = toggleOption,
+							Object = checkbox,
+							IsEnabled = function()
+								return isOptionEnabled
+							end,
+						})
+					end
+				end
+				createOptions(options)
+				if #packedCurrentOption == #options then
+					turnAllButton:SetAttribute("All", true)
+					AnimationSystem.Create(
+						turnAllButton.Checkbox,
+						0.25,
+						{ BackgroundColor3 = COLORS.TOGGLE_ENABLED },
+						false
+					)
+					AnimationSystem.Create(turnAllButton.Checkbox, 0.25, { BackgroundTransparency = 0.25 }, false)
+					AnimationSystem.Create(turnAllButton, 0.25, { TextTransparency = 0.25 }, false)
+				end
+				trackThread(task.spawn(CallbackSystem.SafeCall, name, callback, packedCurrentOption))
+				multiDropdown.MouseButton1Click:Connect(function()
+					if isEnabled then
+						if needOpen then
+							isEnabled = false
+							frameList.Visible = true
+							list.Visible = true
+							local animationTime = #options < 3 and 0.4 or 0.6
+							AnimationSystem.Create(multiDropdown.Icon, animationTime, { Rotation = 180 }, false)
+							AnimationSystem.Create(
+								multiDropdownMain,
+								animationTime,
+								{ Size = UDim2.new(0.975, 0, 0, #options < 3 and 230 or 290) },
+								true
+							)
+							needOpen = false
+							isEnabled = true
+						else
+							isEnabled = false
+							local animationTime = #options < 3 and 0.4 or 0.6
+							AnimationSystem.Create(multiDropdown.Icon, animationTime, { Rotation = 0 }, false)
+							AnimationSystem.Create(multiDropdownMain, 0.3, { Size = UDim2.new(0.975, 0, 0, 50) }, true)
+							frameList.Visible = false
+							list.Visible = false
+							needOpen = true
+							isEnabled = true
+						end
+					end
+				end)
+				local function updateCanvas(optionList)
+					if #optionList < 3 then
+						list.Size = UDim2.new(1, -5, 0, 180)
+						list.ScrollingEnabled = false
+					elseif #optionList == 3 then
+						list.Size = UDim2.new(1, -5, 0, 240)
+						list.ScrollingEnabled = false
+					elseif #optionList > 3 then
+						list.Size = UDim2.new(1, -5, 0, 240)
+						list.ScrollingEnabled = true
+						list.ScrollBarImageTransparency = 0.25
+						list.ScrollBarThickness = 5
+					end
+				end
+				updateCanvas(options)
+				local function destroyOptions()
+					for _, option in ipairs(list:GetChildren()) do
+						if option:IsA("TextButton") and option ~= optionTemplate then
+							option:Destroy()
+						end
+					end
+				end
+				function multiDropdownData:Set(currentOptions)
+					if not isEnabled then
+						return
+					end
+					isEnabled = false
+					AnimationSystem.Create(multiDropdown.Icon, 0.3, { Rotation = 0 }, false)
+					AnimationSystem.Create(multiDropdownMain, 0.3, { Size = UDim2.new(0.975, 0, 0, 50) }, true)
+					frameList.Visible = false
+					list.Visible = false
+					destroyOptions()
+					browserTextBox.Text = ""
+					options = currentOptions or options
+					createOptions(options)
+					updateCanvas(options)
+					toggleAll(false)
+					needOpen = true
+					isEnabled = true
+				end
+				table.insert(windowFunctions, multiDropdownData)
+				return multiDropdownData
+			end
+			function tabFunctions:CreateParagraph(paragraphData)
+				local title = paragraphData.Title
+				local content = paragraphData.Content
+				local paragraph = tabtemplate.ScrollingFrame.Paragraph:Clone()
+				paragraph.Parent = scrollingFrame
+				paragraph.Visible = true
+				local function updateParagraph()
+					local titleText = paragraph.Title
+					titleText.Text = title
+					local contentText = paragraph.Content
+					contentText.Text = content
+					titleText.Size = UDim2.new(
+						titleText.Size.X.Scale,
+						titleText.Size.X.Offset,
+						titleText.Size.Y.Scale,
+						(titleText.TextBounds.Y + 8) / frameScale.Scale
+					)
+					contentText.Size = UDim2.new(
+						contentText.Size.X.Scale,
+						contentText.Size.X.Offset,
+						contentText.Size.Y.Scale,
+						(contentText.TextBounds.Y + 16) / frameScale.Scale
+					)
+					paragraph.Size = UDim2.new(
+						paragraph.Size.X.Scale,
+						paragraph.Size.X.Offset,
+						paragraph.Size.Y.Scale,
+						titleText.Size.Y.Offset + contentText.Size.Y.Offset
+					)
+				end
+				trackThread(task.spawn(updateParagraph))
+				function paragraphData:Set(newData)
+					title = newData.Title or title
+					content = newData.Content or content
+					trackThread(task.spawn(updateParagraph))
+				end
+				table.insert(windowFunctions, paragraphData)
+				return paragraphData
+			end
+			function tabFunctions:CreateLabel(labelContent)
+				local label = tabtemplate.ScrollingFrame.Label:Clone()
+				label.Parent = scrollingFrame
+				label.Visible = true
+				local function updateLabel()
+					label.TextLabel.Text = labelContent
+					label.Size = UDim2.new(
+						label.Size.X.Scale,
+						label.Size.X.Offset,
+						label.Size.Y.Scale,
+						(label.TextLabel.TextBounds.Y + 16) / frameScale.Scale
+					)
+				end
+				trackThread(task.spawn(updateLabel))
+				local labelData = {}
+				function labelData:Set(newText)
+					labelContent = newText or labelContent
+					trackThread(task.spawn(updateLabel))
+				end
+				table.insert(windowFunctions, labelData)
+				return labelData
+			end
+			local tabRecord = blueprint[#blueprint]
+			local methodsToRecord = {
+				"CreateSection",
+				"CreateButton",
+				"CreateToggle",
+				"CreateSlider",
+				"CreateInput",
+				"CreateKeybind",
+				"CreateDropdown",
+				"CreateMultiDropdown",
+				"CreateParagraph",
+				"CreateLabel",
+			}
+			local originals = {}
+			for _, method in ipairs(methodsToRecord) do
+				originals[method] = tabFunctions[method]
+				tabFunctions[method] = function(self, arg)
+					local argCopy
+					if type(arg) == "string" then
+						argCopy = arg
+					else
+						argCopy = {}
+						for k, v in pairs(arg) do
+							if k ~= "Set" then
+								argCopy[k] = v
+							end
+						end
+					end
+					local result = originals[method](self, arg)
+					table.insert(tabRecord.elements, { method = method, data = argCopy, handle = result })
+					return result
+				end
+			end
+			return tabFunctions
+		end
+		function windowFunctions:Load(LoadMode, ConfigText)
+			if type(ConfigText) == "string" and ConfigText ~= "" then
+				local Success, Decoded = pcall(function()
+					return HttpService:JSONDecode(ConfigText)
+				end)
+				if Success and type(Decoded) == "table" then
+					Library.Flags = Decoded
+					ConfigurationSystem.Save(Decoded)
+				end
+			end
+			for _, tabData in ipairs(Library.Tabs) do
+				if tabData.button and tabData.button.Parent then
+					tabData.button:Destroy()
+				end
+				if tabData.sectionBG and tabData.sectionBG.Parent then
+					tabData.sectionBG:Destroy()
+				end
+			end
+			table.clear(Library.Tabs)
+			Library.SelectedTab = nil
+			local savedBlueprint = {}
+			for i, tabRecord in ipairs(blueprint) do
+				savedBlueprint[i] = tabRecord
+			end
+			table.clear(blueprint)
+			for _, tabRecord in ipairs(savedBlueprint) do
+				local freshTab = windowFunctions:CreateTab(tabRecord.name, tabRecord.logo)
+				for _, elem in ipairs(tabRecord.elements) do
+					local freshData
+					if type(elem.data) == "string" then
+						freshData = elem.data
+					else
+						freshData = {}
+						for k, v in pairs(elem.data) do
+							freshData[k] = v
+						end
+					end
+					local newHandle = freshTab[elem.method](freshTab, freshData)
+					if elem.handle and newHandle and type(newHandle.Set) == "function" then
+						elem.handle.Set = function(self, ...)
+							return newHandle:Set(...)
+						end
+					end
+				end
+			end
+			table.clear(savedBlueprint)
+			if LoadMode == "NoGUI" then
+				backgroundGUI.Visible = false
+				backgroundToggle.Visible = false
+				backgroundQuest.Visible = false
+				backgroundNotification.Visible = false
+			elseif LoadMode == "GUI" then
+				backgroundToggle.Visible = true
+				backgroundQuest.Visible = true
+				backgroundNotification.Visible = true
+				if not backgroundGUI.Visible then
+					Library:Toggle()
+				end
+			end
+		end
+		trackThread(task.spawn(function()
+			mainUI.Enabled = true
+			Library:Toggle()
+		end))
+		mainUI.Destroying:Once(function()
+			local emptyFunction = function() end
+			for _, questData in ipairs(activeQuests) do
+				questData.Destroyed = true
+				questData.NeedDestroy = false
+			end
+			for _, thread in ipairs(notificationThreads) do
+				pcall(task.cancel, thread)
+			end
+			for _, thread in ipairs(spaceThreads) do
+				pcall(task.cancel, thread)
+			end
+			for _, conn in ipairs(spaceConnections) do
+				pcall(function()
+					conn:Disconnect()
+				end)
+			end
+			table.clear(notificationThreads)
+			table.clear(spaceThreads)
+			table.clear(spaceConnections)
+			table.clear(activeQuests)
+			table.clear(Library.Flags)
+			table.clear(Library.Tabs)
+			table.clear(blueprint)
+			table.clear(windowFunctions)
+			Library.CreateWindow = emptyFunction
+			Library.CreateQuest = emptyFunction
+			Library.CreateNotification = emptyFunction
+			Library.Toggle = emptyFunction
+			table.clear(Library)
+		end)
+		return windowFunctions
+	end
+end
+return Library
